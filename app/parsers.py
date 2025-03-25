@@ -4,7 +4,49 @@ import httpx
 from lxml import etree
 from utils import Preferences
 from humanfriendly import parse_size
+import time
+import psutil
 
+
+async def system_uptime(self, create_config):
+    uptime_seconds = int(time.time() - psutil.boot_time())
+
+    payload = {
+        'name': 'System Uptime',
+        'icon': 'mdi:clock-outline',
+        'state_class': 'measurement',
+        'unit_of_measurement': 's'
+    }
+
+    self.mqtt_publish(payload, 'sensor', uptime_seconds, create_config=create_config, retain=True)
+
+
+async def cpu_temperature_avg(self, create_config):
+    temps = psutil.sensors_temperatures()
+    if not temps:
+        return
+
+    # Common keys: 'coretemp', 'k10temp', etc.
+    all_temps = []
+    for chip in temps.values():
+        for entry in chip:
+            if hasattr(entry, 'current') and isinstance(entry.current, (int, float)):
+                all_temps.append(entry.current)
+
+    if not all_temps:
+        return
+
+    avg_temp = round(sum(all_temps) / len(all_temps), 1)
+
+    payload = {
+        'name': 'CPU Temperature',
+        'unit_of_measurement': '°C',
+        'device_class': 'temperature',
+        'icon': 'mdi:chip',
+        'state_class': 'measurement'
+    }
+
+    self.mqtt_publish(payload, 'sensor', avg_temp, create_config=create_config, retain=True)
 
 async def default(self, msg_data, create_config):
     pass
@@ -57,38 +99,42 @@ async def disks(self, msg_data, create_config):
 
         # Parse and publish size, used, and free
         try:
-            disk_size_gb = int(disk.get('size', 0)) // 1_000_000_000
-            disk_used_gb = int(disk.get('used', 0)) // 1_000_000_000
-            disk_free_gb = int(disk.get('free', 0)) // 1_000_000_000
-        except (ValueError, TypeError):
-            disk_size_gb = disk_used_gb = disk_free_gb = 0
+            BYTES_PER_SECTOR = 1024
+            BYTES_IN_TB = 1_000_000_000_000  # Decimal terabyte
 
-        if disk_size_gb:
+            disk_size_tb = round((int(disk.get('sizesb', 0)) * BYTES_PER_SECTOR) / BYTES_IN_TB, 2)
+            disk_used_tb = round((int(disk.get('fsused', 0)) * BYTES_PER_SECTOR) / BYTES_IN_TB, 2)
+            disk_free_tb = round((int(disk.get('fsfree', 0)) * BYTES_PER_SECTOR) / BYTES_IN_TB, 2)
+        except (ValueError, TypeError):
+            disk_size_tb = disk_used_tb = disk_free_tb = 0
+
+        if disk_size_tb:
             payload_size = {
                 'name': f'Disk {disk_name} Size',
-                'unit_of_measurement': 'GB',
+                'unit_of_measurement': 'TB',
                 'icon': 'mdi:database',
                 'state_class': 'measurement'
             }
-            self.mqtt_publish(payload_size, 'sensor', disk_size_gb, create_config=create_config, retain=True)
+            self.mqtt_publish(payload_size, 'sensor', disk_size_tb, create_config=create_config, retain=True)
 
-        if disk_used_gb:
+        if disk_used_tb:
             payload_used = {
                 'name': f'Disk {disk_name} Used',
-                'unit_of_measurement': 'GB',
+                'unit_of_measurement': 'TB',
                 'icon': 'mdi:database-arrow-down',
                 'state_class': 'measurement'
             }
-            self.mqtt_publish(payload_used, 'sensor', disk_used_gb, create_config=create_config, retain=True)
+            self.mqtt_publish(payload_used, 'sensor', disk_used_tb, create_config=create_config, retain=True)
 
-        if disk_free_gb:
+        if disk_free_tb:
             payload_free = {
                 'name': f'Disk {disk_name} Free',
-                'unit_of_measurement': 'GB',
+                'unit_of_measurement': 'TB',
                 'icon': 'mdi:database-arrow-up',
                 'state_class': 'measurement'
             }
-            self.mqtt_publish(payload_free, 'sensor', disk_free_gb, create_config=create_config, retain=True)
+            self.mqtt_publish(payload_free, 'sensor', disk_free_tb, create_config=create_config, retain=True)
+
 
 
 async def shares(self, msg_data, create_config):

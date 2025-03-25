@@ -27,7 +27,7 @@ cards:
           hui-picture-card { align-self: center; }
     cards:
       - type: grid
-        title: Kaya
+        title: nas
         columns: 2 
         cards:
           - type: picture
@@ -40,22 +40,22 @@ cards:
           - type: vertical-stack
             cards:
               - type: custom:button-card
-                entity: sensor.kaya_cpu_utilization
+                entity: sensor.nas_cpu_utilization
                 template: button_simple_bar
                 name: CPU
               - type: custom:button-card
-                entity: sensor.kaya_ram_usage
+                entity: sensor.nas_ram_usage
                 template: button_simple_bar
                 name: RAM
               - type: custom:button-card
-                entity: sensor.kaya_fan_speed
+                entity: sensor.nas_fan_speed
                 template: button_simple_bar
                 name: FAN
                 variables:
                   warning_from_state: 80
                   critical_from_state: 90
               - type: custom:button-card
-                entity: sensor.kaya_power_power
+                entity: sensor.nas_power_power
                 template: button_simple_bar
                 name: PWR
                 variables:
@@ -80,16 +80,16 @@ cards:
       content: |
         <ha-alert alert-type="warning">
           <strong>Parity-Check in progress</strong><br />
-          Current position: {{ state_attr("sensor.kaya_parity_check", "current_position") | int(0) | filesizeformat() }}
-                            ({{ states("sensor.kaya_parity_check") | float(0)}} %) @ 
-                            {{ state_attr("sensor.kaya_parity_check", "estimated_speed") | int(0) | filesizeformat() }}/sec<br />
-          Estimated finish: {{ state_attr("sensor.kaya_parity_check", "estimated_finish") }}
+          Current position: {{ state_attr("sensor.nas_parity_check", "current_position") | int(0) | filesizeformat() }}
+                            ({{ states("sensor.nas_parity_check") | float(0)}} %) @ 
+                            {{ state_attr("sensor.nas_parity_check", "estimated_speed") | int(0) | filesizeformat() }}/sec<br />
+          Estimated finish: {{ state_attr("sensor.nas_parity_check", "estimated_finish") }}
         </ha-alert>
     filter:
       template: |
-        {% set parity_status = states("sensor.kaya_parity_check") | float(default=-1) %}
+        {% set parity_status = states("sensor.nas_parity_check") | float(default=-1) %}
         {% if parity_status >= 0 and parity_status < 100 %}
-          sensor.kaya_parity_check,
+          sensor.nas_parity_check,
         {% endif %}
 
   - type: custom:auto-entities
@@ -101,30 +101,30 @@ cards:
     filter:
       template: >-
         {% set disk_order = [
-            'sensor.kaya_disk_parity',
-            'sensor.kaya_disk_parity_2',
-            'sensor.kaya_disk_cache_array',  
-            'sensor.kaya_disk_cache_array_2',
-            'sensor.kaya_disk_1',
-            'sensor.kaya_disk_2',
-            'sensor.kaya_disk_3',
-            'sensor.kaya_disk_4',
-            'sensor.kaya_disk_5',
-            'sensor.kaya_disk_6',
-            'sensor.kaya_disk_7',
-            'sensor.kaya_disk_8',
-            'sensor.kaya_disk_9',
-            'sensor.kaya_disk_10',
-            'sensor.kaya_disk_11',
-            'sensor.kaya_disk_12',
-            'sensor.kaya_disk_13',
-            'sensor.kaya_disk_14',
-            'sensor.kaya_disk_15',
-            'sensor.kaya_disk_16',
-            'sensor.kaya_disk_17',
-            'sensor.kaya_disk_18',
-            'sensor.kaya_disk_19',
-            'sensor.kaya_disk_20',
+            'sensor.nas_disk_parity',
+            'sensor.nas_disk_parity_2',
+            'sensor.nas_disk_cache_array',  
+            'sensor.nas_disk_cache_array_2',
+            'sensor.nas_disk_1',
+            'sensor.nas_disk_2',
+            'sensor.nas_disk_3',
+            'sensor.nas_disk_4',
+            'sensor.nas_disk_5',
+            'sensor.nas_disk_6',
+            'sensor.nas_disk_7',
+            'sensor.nas_disk_8',
+            'sensor.nas_disk_9',
+            'sensor.nas_disk_10',
+            'sensor.nas_disk_11',
+            'sensor.nas_disk_12',
+            'sensor.nas_disk_13',
+            'sensor.nas_disk_14',
+            'sensor.nas_disk_15',
+            'sensor.nas_disk_16',
+            'sensor.nas_disk_17',
+            'sensor.nas_disk_18',
+            'sensor.nas_disk_19',
+            'sensor.nas_disk_20',
           ] 
         %}
 
@@ -140,9 +140,9 @@ cards:
             'entity': disk.entity_id,
             'template': 'button_unraid_disk',
             'variables': {
-              'connectivity_entity': 'sensor.kaya_cpu_utilization'
+              'connectivity_entity': 'sensor.nas_cpu_utilization'
             },
-            'name': disk.attributes.friendly_name | replace("Kaya", "") | replace("Disk Parity", "Parity") | replace("Disk Cache Array", "Cache")
+            'name': disk.attributes.friendly_name | replace("nas", "") | replace("Disk Parity", "Parity") | replace("Disk Cache Array", "Cache")
           }
         }},
         {%- endfor %}
@@ -156,8 +156,8 @@ cards:
     filter:
       template: >-
         {% set disk_order = [
-            'sensor.kaya_disk_cache_docker',
-            'sensor.kaya_disk_cache_docker_2',
+            'sensor.nas_disk_cache_docker',
+            'sensor.nas_disk_cache_docker_2',
           ]
         %}
 
@@ -173,12 +173,12 @@ cards:
             'entity': disk.entity_id,
             'template': 'button_unraid_disk',
             'variables': {
-              'connectivity_entity': 'sensor.kaya_cpu_utilization'
+              'connectivity_entity': 'sensor.nas_cpu_utilization'
             },
             'card_mod': {
               'style': 'ha-card { margin-top: 15px; }'
             },
-            'name': disk.attributes.friendly_name | replace("Disk Parity", "Parity") | replace("Disk Cache", "Cache") | replace("Kaya", "") | trim
+            'name': disk.attributes.friendly_name | replace("Disk Parity", "Parity") | replace("Disk Cache", "Cache") | replace("nas", "") | trim
           }
         }},
         {%- endfor %}
@@ -192,8 +192,8 @@ cards:
     filter:
       template: >-
         {% set disk_order = [
-            'sensor.kaya_disk_cache_system',
-            'sensor.kaya_disk_cache_system_2',
+            'sensor.nas_disk_cache_system',
+            'sensor.nas_disk_cache_system_2',
           ]
         %}
 
@@ -209,12 +209,12 @@ cards:
             'entity': disk.entity_id,
             'template': 'button_unraid_disk',
             'variables': {
-              'connectivity_entity': 'sensor.kaya_cpu_utilization'
+              'connectivity_entity': 'sensor.nas_cpu_utilization'
             },
             'card_mod': {
               'style': 'ha-card { margin-top: 15px; }'
             },
-            'name': disk.attributes.friendly_name | replace("Disk Parity", "Parity") | replace("Disk Cache", "Cache") | replace("Kaya", "") | trim
+            'name': disk.attributes.friendly_name | replace("Disk Parity", "Parity") | replace("Disk Cache", "Cache") | replace("nas", "") | trim
           }
         }},
         {%- endfor %}
@@ -243,7 +243,7 @@ cards:
         filter:
           template: >-
             {% set share_list = states.sensor
-               | selectattr('entity_id','search', 'kaya_share')
+               | selectattr('entity_id','search', 'nas_share')
                | rejectattr('attributes.nameorig', 'in', ['appdata', 'backup', 'system', 'vms'])
                | sort(reverse=true,attribute='state')
                | map(attribute='entity_id')
