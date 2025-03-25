@@ -40,7 +40,7 @@ class UnRAIDServer(object):
         unraid_id = normalize_str(self.unraid_name)
         will_message = Message(f'unraid/{unraid_id}/connectivity/state', 'OFF', retain=True)
         self.mqtt_client = MQTTClient(self.unraid_name, will_message=will_message)
-        asyncio.ensure_future(self.mqtt_connect(mqtt_config))
+        self.mqtt_config = mqtt_config  
 
         # Logger
         self.logger = logging.getLogger(self.unraid_name)
@@ -52,6 +52,16 @@ class UnRAIDServer(object):
 
         self.loop = loop
 
+async def system_sensor_loop(self):
+    while self.mqtt_connected:
+        try:
+            self.logger.info("Publishing system uptime and CPU temperature...")
+            await parsers.system_uptime(self, create_config=True)
+            await parsers.cpu_temperature_avg(self, create_config=True)
+        except Exception:
+            self.logger.exception("Failed to publish system sensors.")
+        await asyncio.sleep(self.scan_interval)
+
     def on_connect(self, client, flags, rc, properties):
         self.logger.info('Successfully connected to mqtt server')
 
@@ -62,6 +72,7 @@ class UnRAIDServer(object):
         self.mqtt_connected = True
         self.mqtt_status(connected=True, create_config=True)
         self.unraid_task = asyncio.ensure_future(self.ws_connect())
+        self.sensor_task = asyncio.ensure_future(self.sensor_loop()) 
 
     def on_message(self, client, topic, payload, qos, properties):
         self.logger.info(f'Message received: {topic}')
@@ -282,7 +293,9 @@ if __name__ == '__main__':
 
     # Create unraid instances
     for unraid_config in config.get('unraid'):
-        UnRAIDServer(config.get('mqtt'), unraid_config, loop)
+        server = UnRAIDServer(config.get('mqtt'), unraid_config, loop)
+        loop.create_task(server.mqtt_connect(server.mqtt_config))  # Start MQTT after init
+
 
     # Loop forever
     loop.run_forever()
