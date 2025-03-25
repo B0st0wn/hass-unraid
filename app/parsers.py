@@ -45,16 +45,50 @@ async def disks(self, msg_data, create_config):
             disk_name = ' '.join(filter(None, [disk_name, disk_num]))
         disk_name = disk_name.title().replace('_', ' ')
 
-        payload = {
-            'name': f'Disk {disk_name}',
+        # Publish Temperature
+        payload_temp = {
+            'name': f'Disk {disk_name} Temperature',
             'unit_of_measurement': '°C',
             'device_class': 'temperature',
             'icon': 'mdi:harddisk',
             'state_class': 'measurement'
         }
+        self.mqtt_publish(payload_temp, 'sensor', disk_temp, json_attributes=disk, create_config=create_config, retain=True)
 
-        json_attributes = disk
-        self.mqtt_publish(payload, 'sensor', disk_temp, json_attributes, create_config=create_config, retain=True)
+        # Parse and publish size, used, and free
+        try:
+            disk_size_gb = int(disk.get('size', 0)) // 1_000_000_000
+            disk_used_gb = int(disk.get('used', 0)) // 1_000_000_000
+            disk_free_gb = int(disk.get('free', 0)) // 1_000_000_000
+        except (ValueError, TypeError):
+            disk_size_gb = disk_used_gb = disk_free_gb = 0
+
+        if disk_size_gb:
+            payload_size = {
+                'name': f'Disk {disk_name} Size',
+                'unit_of_measurement': 'GB',
+                'icon': 'mdi:database',
+                'state_class': 'measurement'
+            }
+            self.mqtt_publish(payload_size, 'sensor', disk_size_gb, create_config=create_config, retain=True)
+
+        if disk_used_gb:
+            payload_used = {
+                'name': f'Disk {disk_name} Used',
+                'unit_of_measurement': 'GB',
+                'icon': 'mdi:database-arrow-down',
+                'state_class': 'measurement'
+            }
+            self.mqtt_publish(payload_used, 'sensor', disk_used_gb, create_config=create_config, retain=True)
+
+        if disk_free_gb:
+            payload_free = {
+                'name': f'Disk {disk_name} Free',
+                'unit_of_measurement': 'GB',
+                'icon': 'mdi:database-arrow-up',
+                'state_class': 'measurement'
+            }
+            self.mqtt_publish(payload_free, 'sensor', disk_free_gb, create_config=create_config, retain=True)
 
 
 async def shares(self, msg_data, create_config):
