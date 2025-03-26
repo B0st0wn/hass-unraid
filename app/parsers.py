@@ -11,33 +11,33 @@ import psutil
 async def system_uptime(self, create_config):
     uptime_seconds = int(time.time() - psutil.boot_time())
 
-    # Format to days, hours, minutes, seconds
+    # Format
     days, remainder = divmod(uptime_seconds, 86400)
     hours, remainder = divmod(remainder, 3600)
-    minutes, _ = divmod(remainder, 60)
+    minutes, seconds = divmod(remainder, 60)
 
-    parts = []
-    if days:
-        parts.append(f"{days} day{'s' if days != 1 else ''}")
-    if hours:
-        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
-    if minutes:
-        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
-    pretty = ' '.join(parts)
+    pretty = f"{days}d {hours}h {minutes}m {seconds}s"
+    long_pretty = []
+    if days: long_pretty.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours: long_pretty.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes: long_pretty.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+    if seconds: long_pretty.append(f"{seconds} second{'s' if seconds != 1 else ''}")
+
+    full_pretty = ' '.join(long_pretty)
 
     payload = {
         'name': 'System Uptime',
         'icon': 'mdi:clock-outline',
+        'unit_of_measurement': 's',
         'state_class': 'measurement'
     }
 
     attributes = {
-        'raw_seconds': uptime_seconds
+        'formatted': pretty,
+        'human_readable': full_pretty
     }
 
-    # Publish pretty uptime as main state
-    self.mqtt_publish(payload, 'sensor', pretty, json_attributes=attributes, create_config=create_config, retain=True)
-
+    self.mqtt_publish(payload, 'sensor', uptime_seconds, json_attributes=attributes, create_config=create_config, retain=True)
 
 
 async def cpu_temperature_avg(self, create_config):
