@@ -56,8 +56,8 @@ class UnRAIDServer(object):
         self.logger.info('Successfully connected to mqtt server')
 
         # Create and subscribe to Mover button
-        # mover_payload = { 'name': 'Mover' }
-        # self.mqtt_publish(mover_payload, 'button', state_value='OFF', create_config=True)
+        mover_payload = { 'name': 'Mover' }
+        self.mqtt_publish(mover_payload, 'button', state_value='OFF', create_config=True)
 
         self.mqtt_connected = True
         self.mqtt_status(connected=True, create_config=True)

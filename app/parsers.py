@@ -11,33 +11,32 @@ import psutil
 async def system_uptime(self, create_config):
     uptime_seconds = int(time.time() - psutil.boot_time())
 
-    # Format
     days, remainder = divmod(uptime_seconds, 86400)
     hours, remainder = divmod(remainder, 3600)
     minutes, seconds = divmod(remainder, 60)
-
     pretty = f"{days}d {hours}h {minutes}m {seconds}s"
-    long_pretty = []
-    if days: long_pretty.append(f"{days} day{'s' if days != 1 else ''}")
-    if hours: long_pretty.append(f"{hours} hour{'s' if hours != 1 else ''}")
-    if minutes: long_pretty.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
-    if seconds: long_pretty.append(f"{seconds} second{'s' if seconds != 1 else ''}")
-
-    full_pretty = ' '.join(long_pretty)
 
     payload = {
         'name': 'System Uptime',
         'icon': 'mdi:clock-outline',
-        'unit_of_measurement': 's',
-        'state_class': 'measurement'
+        'state_class': 'measurement',
+        'unit_of_measurement': 's'
     }
 
     attributes = {
-        'formatted': pretty,
-        'human_readable': full_pretty
+        'formatted': pretty
     }
 
-    self.mqtt_publish(payload, 'sensor', uptime_seconds, json_attributes=attributes, create_config=create_config, retain=True)
+    self.mqtt_publish(
+        payload,
+        'sensor',
+        uptime_seconds,
+        json_attributes=attributes,
+        create_config=create_config,
+        retain=True
+    )
+
+    self.mqtt_publish(payload, 'sensor', uptime_seconds, create_config=create_config, retain=True)
 
 
 async def cpu_temperature_avg(self, create_config):
@@ -45,7 +44,6 @@ async def cpu_temperature_avg(self, create_config):
     if not temps:
         return
 
-    # Common keys: 'coretemp', 'k10temp', etc.
     all_temps = []
     for chip in temps.values():
         for entry in chip:
@@ -106,7 +104,6 @@ async def disks(self, msg_data, create_config):
             disk_name = ' '.join(filter(None, [disk_name, disk_num]))
         disk_name = disk_name.title().replace('_', ' ')
 
-        # Publish Temperature
         payload_temp = {
             'name': f'Disk {disk_name} Temperature',
             'unit_of_measurement': '°C',
@@ -116,7 +113,6 @@ async def disks(self, msg_data, create_config):
         }
         self.mqtt_publish(payload_temp, 'sensor', disk_temp, json_attributes=disk, create_config=create_config, retain=True)
 
-        # Parse and publish size, used, and free
         try:
             BYTES_PER_SECTOR = 1024
             BYTES_IN_TB = 1_000_000_000_000  # Decimal terabyte
@@ -234,21 +230,12 @@ async def shares(self, msg_data, create_config):
                     size_cache_free = next(iter(size_cache_free or []), '0').strip()
                     size_cache_free = parse_size(size_cache_free)
 
-                    # # Debug
-                    # from humanfriendly import format_size
-                    # print(f'Share: {share_nameorig}')
-                    # print(f'Used (total): {format_size(size_total_used)} Free (total): {format_size(size_total_free)}')
-                    # print(f'Used (cache): {format_size(size_cache_used)} Free (total): {format_size(size_cache_free)}')
-
-                    # Recalculate used and free space, converted from bytes to kbytes
                     share['used'] = int(size_total_used / 1000)
                     share['free'] = int((size_total_free - size_cache_free - size_cache_used) / 1000)
 
-        # Skip empty shares
         if share['used'] == 0:
             continue
 
-        # If the drives is exclusive we change the share_disk_count to 1
         if share.get('exclusive') in ['yes']:
             share_disk_count = 1
 
