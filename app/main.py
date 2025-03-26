@@ -62,6 +62,7 @@ class UnRAIDServer(object):
         self.mqtt_connected = True
         self.mqtt_status(connected=True, create_config=True)
         self.unraid_task = asyncio.ensure_future(self.ws_connect())
+        self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
 
     def on_message(self, client, topic, payload, qos, properties):
         self.logger.info(f'Message received: {topic}')
@@ -137,6 +138,16 @@ class UnRAIDServer(object):
         # Subscribe to buttons
         if sensor_type == 'button':
             self.mqtt_client.subscribe(f'unraid/{unraid_id}/{sensor_id}/commands', qos=0, retain=retain)
+
+    async def system_sensor_loop(self):
+        while self.mqtt_connected:
+            try:
+                self.logger.info("Publishing system uptime and CPU temperature...")
+                await parsers.system_uptime(self, create_config=True)
+                await parsers.cpu_temperature_avg(self, create_config=True)
+            except Exception:
+                self.logger.exception("Failed to publish system sensors.")
+            await asyncio.sleep(self.scan_interval)
 
     async def mqtt_connect(self, mqtt_config):
         # MQTT config
