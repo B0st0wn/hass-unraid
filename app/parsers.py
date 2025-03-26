@@ -14,30 +14,30 @@ async def system_uptime(self, create_config):
     # Format to days, hours, minutes, seconds
     days, remainder = divmod(uptime_seconds, 86400)
     hours, remainder = divmod(remainder, 3600)
-    minutes, seconds = divmod(remainder, 60)
-    pretty = f"{days}d {hours}h {minutes}m {seconds}s"
+    minutes, _ = divmod(remainder, 60)
+
+    parts = []
+    if days:
+        parts.append(f"{days} day{'s' if days != 1 else ''}")
+    if hours:
+        parts.append(f"{hours} hour{'s' if hours != 1 else ''}")
+    if minutes:
+        parts.append(f"{minutes} minute{'s' if minutes != 1 else ''}")
+    pretty = ' '.join(parts)
 
     payload = {
         'name': 'System Uptime',
         'icon': 'mdi:clock-outline',
-        'state_class': 'measurement',
-        'unit_of_measurement': 's'
+        'state_class': 'measurement'
     }
 
     attributes = {
-        'formatted': pretty
+        'raw_seconds': uptime_seconds
     }
 
-    self.mqtt_publish(
-        payload,
-        'sensor',
-        uptime_seconds,
-        json_attributes=attributes,
-        create_config=create_config,
-        retain=True
-    )
+    # Publish pretty uptime as main state
+    self.mqtt_publish(payload, 'sensor', pretty, json_attributes=attributes, create_config=create_config, retain=True)
 
-    self.mqtt_publish(payload, 'sensor', uptime_seconds, create_config=create_config, retain=True)
 
 
 async def cpu_temperature_avg(self, create_config):
