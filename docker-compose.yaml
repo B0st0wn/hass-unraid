@@ -6,9 +6,9 @@ services:
     network_mode: bridge
     restart: always
     environment:
-      - TZ=Europe/Oslo
+      - TZ=America/New_York
     volumes:
       - './data:/data'
     labels:
       - 'net.unraid.docker.icon=/mnt/user/docker/docker-icons/data/hass-unraid.png'
-    image: ghcr.io/idmedia/hass-unraid:latest
+    image: ghcr.io/b0st0wn/hass-unraid:latest
