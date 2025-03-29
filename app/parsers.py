@@ -358,6 +358,73 @@ async def update3(self, msg_data, create_config):
         self.mqtt_publish(payload_download, 'sensor', network_download, create_config=create_config)
         self.mqtt_publish(payload_upload, 'sensor', network_upload, create_config=create_config)
 
+async def vms(self, msg_data, create_config):
+    from lxml import etree
+    import re
+
+    tree = etree.HTML(msg_data)
+    vm_rows = tree.xpath('//tr[contains(@class, "sortable")]')
+
+    for index, row in enumerate(vm_rows):
+        # VM name
+        name = ''.join(row.xpath('.//span[@class="inner"]/a/text()')).strip()
+        if not name:
+            continue
+
+        vm_id = normalize_str(name)
+
+        # Power state
+        state = ''.join(row.xpath('.//span[@class="state"]/text()')).strip().lower()
+        power = 'ON' if 'started' in state or 'running' in state else 'OFF'
+
+        # vCPU
+        vcpu_text = ''.join(row.xpath(f'.//a[contains(@class, "vcpu-")]/text()')).strip()
+        try:
+            vcpus = int(vcpu_text)
+        except ValueError:
+            vcpus = 0
+
+        # Memory (in MB)
+        mem_text = ''.join(row.xpath('./td[4]/text()')).strip()
+        mem_mb = int(re.sub(r'[^\d]', '', mem_text)) if mem_text else 0
+
+        # IP Addresses — in the next <tr> with child-id
+        ip_xpath = f'//tr[@id="name-{index}"]//td/span[@class="vmgraphics"]/text() | //tr[@id="name-{index}"]//td/text()'
+        ip_texts = [t.strip() for t in tree.xpath(ip_xpath) if re.match(r'\d+\.\d+\.\d+\.\d+/\d+', t)]
+        ip_list = [ip.split('/')[0] for ip in ip_texts]
+
+        attributes = {
+            'vcpus': vcpus,
+            'memory_mb': mem_mb,
+            'ip_addresses': ip_list
+        }
+
+        # Publish power state
+        payload_power = {
+            'name': f'VM {name} State',
+            'device_class': 'running',
+            'icon': 'mdi:monitor'
+        }
+        self.mqtt_publish(payload_power, 'binary_sensor', power, json_attributes=attributes, create_config=create_config)
+
+        # Publish vCPU
+        payload_vcpu = {
+            'name': f'VM {name} vCPUs',
+            'unit_of_measurement': '',
+            'icon': 'mdi:chip',
+            'state_class': 'measurement'
+        }
+        self.mqtt_publish(payload_vcpu, 'sensor', vcpus, create_config=create_config)
+
+        # Publish Memory (MB)
+        payload_mem = {
+            'name': f'VM {name} Memory',
+            'unit_of_measurement': 'MB',
+            'icon': 'mdi:memory',
+            'state_class': 'measurement'
+        }
+        self.mqtt_publish(payload_mem, 'sensor', mem_mb, create_config=create_config)
+
 
 async def parity(self, msg_data, create_config):
     data = msg_data.split(';')
@@ -406,4 +473,46 @@ async def var(self, msg_data, create_config):
     }
 
     json_attributes = var_json
-    self.mqtt_publish(payload, 'binary_sensor', var_value, json_attributes, create_config=create_config, retain=True)
+    self.mqtt_publish(payload, 'binary_sensor', var_value, json_attributes=json_attributes, create_config=create_config)
+
+async def parity(self, msg_data, create_config):
+    data = msg_data.split(';')
+    if len(data) < 5:
+        return
+
+    # Extract and calculate parity progress percentage
+    position_size = re.sub(r'\([^)]*\)', '', data[2])
+    position_pct = data[2][data[2].find('(') + 1:data[2].find(')')]
+    position_pct = ''.join(c for c in position_pct if c.isdigit() or c == '.')
+    try:
+        state_value = float(position_pct)
+    except ValueError:
+        state_value = 0.0
+
+    # Publish the parity progress sensor
+    payload = {
+        'name': 'Parity Check',
+        'unit_of_measurement': '%',
+        'icon': 'mdi:database-eye',
+        'state_class': 'measurement'
+    }
+    json_attributes = {
+        'total_size': parse_size(data[0]),
+        'elapsed_time': data[1],
+        'current_position': parse_size(position_size),
+        'estimated_speed': parse_size(data[3]),
+        'estimated_finish': data[4]
+    }
+    # Optionally include sync_errors_corrected if available
+    if len(data) > 5:
+        json_attributes['sync_errors_corrected'] = data[5]
+    self.mqtt_publish(payload, 'sensor', state_value, json_attributes=json_attributes, create_config=create_config)
+
+    # Publish a binary sensor for parity validity:
+    # Consider parity valid if the progress is 100%
+    valid = "ON" if state_value >= 100 else "OFF"
+    payload_valid = {
+        'name': 'Parity Validity',
+        'device_class': 'safety'  # or another appropriate device_class
+    }
+    self.mqtt_publish(payload_valid, 'binary_sensor', valid, json_attributes={'parity_progress': state_value}, create_config=create_config)

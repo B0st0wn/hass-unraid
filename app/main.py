@@ -58,7 +58,7 @@ class UnRAIDServer(object):
         # Create and subscribe to Mover button
         mover_payload = { 'name': 'Mover' }
         self.mqtt_publish(mover_payload, 'button', state_value='OFF', create_config=True)
-
+        self.vm_task = asyncio.ensure_future(self.vm_sensor_loop())
         self.mqtt_connected = True
         self.mqtt_status(connected=True, create_config=True)
         self.unraid_task = asyncio.ensure_future(self.ws_connect())
@@ -111,7 +111,7 @@ class UnRAIDServer(object):
                 create_config['command_topic'] = f'unraid/{unraid_id}/{sensor_id}/commands'
 
             # Expire all sensors except binary_sensor (connectivity)
-            if not sensor_id.startswith(('connectivity', 'share_', 'disk_')):
+            if not sensor_id.startswith(('connectivity', 'array', 'share_', 'disk_')):
                 expire_in_seconds = self.scan_interval * 4
                 create_config['expire_after'] = expire_in_seconds if expire_in_seconds > 120 else 120
 
@@ -147,6 +147,17 @@ class UnRAIDServer(object):
                 await parsers.cpu_temperature_avg(self, create_config=True)
             except Exception:
                 self.logger.exception("Failed to publish system sensors.")
+            await asyncio.sleep(self.scan_interval)
+
+    async def vm_sensor_loop(self):
+        while self.mqtt_connected:
+            try:
+                async with httpx.AsyncClient() as http:
+                    headers = { 'Cookie': self.unraid_cookie }
+                    r = await http.get(f'{self.unraid_url}/VMMachines.php', headers=headers)
+                    await parsers.vms(self, r.text, create_config=False)
+            except Exception:
+                self.logger.exception("Failed to fetch VM info")
             await asyncio.sleep(self.scan_interval)
 
     async def mqtt_connect(self, mqtt_config):
