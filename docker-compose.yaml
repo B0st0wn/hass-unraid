@@ -1,5 +1,3 @@
-version: '3'
-
 services:
   hass-unraid:
     container_name: hass-unraid

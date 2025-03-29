@@ -8,7 +8,7 @@ import signal
 import asyncio
 import logging
 import websockets
-import app.unraid_parsers as unraid_parsers
+import unraid_parsers as parsers
 from lxml import etree
 from utils import load_file, normalize_str, handle_sigterm
 from gmqtt import Client as MQTTClient, Message
@@ -125,8 +125,8 @@ class UnRAIDServer(object):
         while self.mqtt_connected:
             try:
                 self.logger.info("Publishing system uptime and CPU temperature...")
-                await unraid_parsers.system_uptime(self, create_config=True)
-                await unraid_parsers.cpu_temperature_avg(self, create_config=True)
+                await parsers.system_uptime(self, create_config=True)
+                await parsers.cpu_temperature_avg(self, create_config=True)
             except Exception:
                 self.logger.exception("Failed to publish system sensors.")
             await asyncio.sleep(self.scan_interval)
@@ -137,7 +137,7 @@ class UnRAIDServer(object):
                 async with httpx.AsyncClient() as http:
                     headers = {'Cookie': self.unraid_cookie}
                     r = await http.get(f'{self.unraid_url}/VMMachines.php', headers=headers)
-                    await unraid_parsers.vms(self, r.text, create_config=False)
+                    await parsers.vms(self, r.text, create_config=False)
             except Exception:
                 self.logger.exception("Failed to fetch VM info")
             await asyncio.sleep(self.scan_interval)
@@ -189,15 +189,15 @@ class UnRAIDServer(object):
                 subprotocols = ['ws+meta.nchan']
 
                 sub_channels = {
-                    'var': unraid_parsers.var,
-                    'session': unraid_parsers.session,
-                    'cpuload': unraid_parsers.cpuload,
-                    'disks': unraid_parsers.disks,
-                    'parity': unraid_parsers.parity,
-                    'shares': unraid_parsers.shares,
-                    'update1': unraid_parsers.update1,
-                    'update3': unraid_parsers.update3,
-                    'temperature': unraid_parsers.temperature
+                    'var': parsers.var,
+                    'session': parsers.session,
+                    'cpuload': parsers.cpuload,
+                    'disks': parsers.disks,
+                    'parity': parsers.parity,
+                    'shares': parsers.shares,
+                    'update1': parsers.update1,
+                    'update3': parsers.update3,
+                    'temperature': parsers.temperature
                 }
 
                 websocket_url = f'{self.unraid_ws}/sub/{",".join(sub_channels)}'
@@ -210,7 +210,7 @@ class UnRAIDServer(object):
                         msg_data = data.replace('\00', ' ').split('\n\n', 1)[1]
                         msg_ids = re.findall(r'([-\[\d\],]+,[-\[\d\],]*)|$', data)[0].split(',')
                         sub_channel = next(sub for (sub, msg) in zip(sub_channels, msg_ids) if msg.startswith('['))
-                        msg_parser = sub_channels.get(sub_channel, unraid_parsers.default)
+                        msg_parser = sub_channels.get(sub_channel, parsers.default)
 
                         if sub_channel == 'shares':
                             current_time = time.time()
