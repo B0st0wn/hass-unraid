@@ -125,8 +125,8 @@ class UnRAIDServer(object):
         while self.mqtt_connected:
             try:
                 self.logger.info("Publishing system uptime and CPU temperature...")
-                await unraid_parsers.system_uptime(self, create_config=True)
-                await unraid_parsers.cpu_temperature_avg(self, create_config=True)
+                await parsers.system_uptime(self, create_config=True)
+                await parsers.cpu_temperature_avg(self, create_config=True)
             except Exception:
                 self.logger.exception("Failed to publish system sensors.")
             await asyncio.sleep(self.scan_interval)
@@ -137,7 +137,7 @@ class UnRAIDServer(object):
                 async with httpx.AsyncClient() as http:
                     headers = {'Cookie': self.unraid_cookie}
                     r = await http.get(f'{self.unraid_url}/VMMachines.php', headers=headers)
-                    await unraid_parsers.vms(self, r.text, create_config=False)
+                    await parsers.vms(self, r.text, create_config=False)
             except Exception:
                 self.logger.exception("Failed to fetch VM info")
             await asyncio.sleep(self.scan_interval)
@@ -210,7 +210,7 @@ class UnRAIDServer(object):
                         msg_data = data.replace('\00', ' ').split('\n\n', 1)[1]
                         msg_ids = re.findall(r'([-\[\d\],]+,[-\[\d\],]*)|$', data)[0].split(',')
                         sub_channel = next(sub for (sub, msg) in zip(sub_channels, msg_ids) if msg.startswith('['))
-                        msg_parser = sub_channels.get(sub_channel, unraid_parsers.default)
+                        msg_parser = sub_channels.get(sub_channel, parsers.default)
 
                         if sub_channel == 'shares':
                             current_time = time.time()
