@@ -1,6 +1,7 @@
 from utils import Preferences
 
 async def var(self, msg_data, create_config):
+    self.logger.debug("Array parser triggered")
     msg_data = f'[var]\n{msg_data}'
     prefs = Preferences(msg_data)
     var = prefs.as_dict()

@@ -207,6 +207,7 @@ class UnRAIDServer(object):
                     while self.mqtt_connected:
                         data = await asyncio.wait_for(websocket.recv(), timeout=120)
                         last_msg = data
+                        self.logger.debug(f"Full raw websocket message:\n{data}")
                         msg_data = data.replace('\00', ' ').split('\n\n', 1)[1]
                         msg_ids = re.findall(r'([-\[\d\],]+,[-\[\d\],]*)|$', data)[0].split(',')
                         sub_channel = next(sub for (sub, msg) in zip(sub_channels, msg_ids) if msg.startswith('['))
