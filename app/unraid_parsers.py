@@ -17,9 +17,3 @@ from parsers.array import var
 from parsers.disks import disks
 from parsers.shares import shares
 from parsers.vms import vms
-
-async def default(self, msg_data, create_config):
-    pass
-
-async def session(self, msg_data, create_config):
-    self.csrf_token = msg_data
