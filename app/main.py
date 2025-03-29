@@ -197,7 +197,6 @@ class UnRAIDServer(object):
                     'shares': parsers.shares,
                     'update1': parsers.update1,
                     'update3': parsers.update3,
-                    'docker': parsers.docker,
                     'temperature': parsers.temperature
                 }
 
