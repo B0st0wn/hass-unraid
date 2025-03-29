@@ -19,6 +19,8 @@ from parsers.shares import shares
 from parsers.vms import vms
 from parsers.array_var import var
 from parsers.update2 import update2
+from parsers.docker import docker
+
 
 
 async def default(self, msg_data, create_config):
