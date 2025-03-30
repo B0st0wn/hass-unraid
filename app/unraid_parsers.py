@@ -16,7 +16,7 @@ from parsers.parity import parity
 from parsers.disks import disks
 from parsers.shares import shares
 from parsers.vms import vms
-from parsers.array_var import var
+from parsers.array_status import array_status
 from parsers.update2 import update2
 
 
