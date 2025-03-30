@@ -1,0 +1,10 @@
+title: Home NAS
+views:
+  - title: Server
+    path: server
+    icon: mdi:server
+    panel: false
+    cards:
+      - !include cards/server_nas.yaml
+
+button_card_templates: !include_dir_merge_named templates/

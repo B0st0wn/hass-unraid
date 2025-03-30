@@ -25,7 +25,7 @@ button_network_share:
       - column-gap: 5px
       - grid-template-rows: 1fr
     card:
-      - color: '#000'
+      - color: '#FFF'
       - font-size: 1em
       - border-style: none
       - --mdc-ripple-color: none
@@ -44,7 +44,7 @@ button_network_share:
       state:
         - grid-area: state
         - justify-self: start
-        - color: '#888'
+        - color: '#FFF'
         - font-size: 0.8em
   custom_fields:
     state: >

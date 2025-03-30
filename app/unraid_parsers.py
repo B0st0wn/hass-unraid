@@ -13,7 +13,6 @@ from parsers.memory import update1
 from parsers.network import update3
 from parsers.tempsensors import temperature
 from parsers.parity import parity
-from parsers.array import var
 from parsers.disks import disks
 from parsers.shares import shares
 from parsers.vms import vms
