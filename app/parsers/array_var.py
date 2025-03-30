@@ -1,17 +1,25 @@
-from utils import Preferences
+# parsers/array_status.py
+import httpx
 
-async def var(self, msg_data, create_config):
-    self.logger.debug("Array parser triggered")
-    prefs = Preferences(f'[var]\n{msg_data}')
-    parsed = prefs.as_dict().get('var', {})
+async def array_status(self, msg_data, create_config):
+    self.logger.debug("[array_status] HTTP polling array state...")
 
-    var_value = 'OFF'
-    if 'mdstate' in parsed and 'started' in parsed['mdstate'].lower():
-        var_value = 'ON'
+    try:
+        async with httpx.AsyncClient() as http:
+            headers = {'Cookie': self.unraid_cookie}
+            r = await http.get(f'{self.unraid_url}/plugins/mdStatus.php', headers=headers)
+            data = r.json()
 
-    payload = {
-        'name': 'Array',
-        'device_class': 'running'
-    }
+            mdstate = data.get("mdState", "unknown")
+            var_value = 'ON' if mdstate == 'started' else 'OFF'
 
-    self.mqtt_publish(payload, 'binary_sensor', var_value, json_attributes=parsed, create_config=create_config)
+            payload = {
+                'name': 'Array',
+                'device_class': 'running'
+            }
+
+            self.logger.debug(f"[array_status] mdState: {mdstate}")
+            self.mqtt_publish(payload, 'binary_sensor', var_value, json_attributes=data, create_config=create_config)
+
+    except Exception:
+        self.logger.exception("[array_status] Failed to poll array state")
