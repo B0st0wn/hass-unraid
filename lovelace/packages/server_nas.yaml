@@ -1,7 +1,0 @@
-template:
-  - sensor:
-      - name: "NAS Fan Speed"
-        unit_of_measurement: "%"
-        state: "{{ ([0, (100 * int(states('sensor.nas_fan_1_speed')) / 2060) | round(0), 100]|sort)[1] }}"
-        icon: mdi:fan
-        

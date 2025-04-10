@@ -1,25 +1,33 @@
 # parsers/array_status.py
-import httpx
+import re
+import html
+import json
 
 async def array_status(self, msg_data, create_config):
-    self.logger.debug("[array_status] HTTP polling array state...")
+    self.logger.debug("[array_status] Parsing array health from update2 stream")
 
     try:
-        async with httpx.AsyncClient() as http:
-            headers = {'Cookie': self.unraid_cookie}
-            r = await http.get(f'{self.unraid_url}/plugins/mdStatus.php', headers=headers)
-            data = r.json()
+        parsed = json.loads(msg_data)
+        html_data = html.unescape(parsed['disk'][0])
 
-            mdstate = data.get("mdState", "unknown")
-            var_value = 'ON' if mdstate == 'started' else 'OFF'
+        match_text = re.search(r"id=['\"]text-parity['\"]>(\w+)<", html_data)
+        match_orb = re.search(r"fa fa-circle orb (\w+-orb)", html_data)
 
-            payload = {
-                'name': 'Array',
-                'device_class': 'running'
-            }
+        if match_text:
+            state = match_text.group(1).capitalize()
+        elif match_orb:
+            orb = match_orb.group(1)
+            state = "Healthy" if "green" in orb else "Error" if "red" in orb else "Unknown"
+        else:
+            state = "Unknown"
 
-            self.logger.debug(f"[array_status] mdState: {mdstate}")
-            self.mqtt_publish(payload, 'binary_sensor', var_value, json_attributes=data, create_config=create_config)
+        payload = {
+            "name": "Array",
+            "icon": "mdi:server"
+        }
+
+        self.logger.debug(f"[array_status] Array status: {state}")
+        self.mqtt_publish(payload, "sensor", state, create_config=create_config)
 
     except Exception:
-        self.logger.exception("[array_status] Failed to poll array state")
+        self.logger.exception("[array_status] Failed to parse array health")

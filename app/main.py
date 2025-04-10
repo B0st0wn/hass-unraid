@@ -189,14 +189,13 @@ class UnRAIDServer(object):
                 subprotocols = ['ws+meta.nchan']
 
                 sub_channels = {
-                    'update3': parsers.array_status,
+                    'update2': parsers.array_status,
                     'session': parsers.session,
                     'cpuload': parsers.cpuload,
                     'disks': parsers.disks,
                     'parity': parsers.parity,
                     'shares': parsers.shares,
                     'update1': parsers.update1,
-                    'update3': parsers.array_status,
                     'temperature': parsers.temperature
                 }
 
