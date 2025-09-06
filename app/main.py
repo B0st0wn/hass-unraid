@@ -98,7 +98,7 @@ class UnRAIDServer(object):
             if sensor_type == 'button':
                 create_config['command_topic'] = f'unraid/{unraid_id}/{sensor_id}/commands'
 
-            if not sensor_id.startswith(('connectivity', 'array', 'share_', 'disk_')):
+            if not sensor_id.startswith(('connectivity', 'array', 'share_', 'disk_', 'ups_')):
                 expire_in_seconds = self.scan_interval * 4
                 create_config['expire_after'] = expire_in_seconds if expire_in_seconds > 120 else 120
 
@@ -196,7 +196,8 @@ class UnRAIDServer(object):
                     'parity': parsers.parity,
                     'shares': parsers.shares,
                     'update1': parsers.update1,
-                    'temperature': parsers.temperature
+                    'temperature': parsers.temperature,
+                    'apcups': parsers.apcups
                 }
 
                 websocket_url = f'{self.unraid_ws}/sub/{",".join(sub_channels)}'
