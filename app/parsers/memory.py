@@ -3,10 +3,6 @@ import re
 async def update1(self, msg_data, create_config):
     memory_categories = ['RAM', 'Flash', 'Log', 'Docker']
     matches = re.findall(r'(\d+(?:\.\d+)?\s*%)', msg_data)
-    print("=== update1 msg_data ===")
-    print(msg_data)
-
-
     for memory_name, memory_usage in zip(memory_categories, matches):
         memory_value = ''.join(c for c in memory_usage if c.isdigit())
         if memory_value:

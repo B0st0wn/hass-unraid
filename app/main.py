@@ -60,7 +60,7 @@ class UnRAIDServer(object):
         self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
 
     def on_message(self, client, topic, payload, qos, properties):
-        self.logger.info(f'Message received: {topic}')
+        pass
 
     def on_disconnect(self, client, packet, exc=None):
         self.logger.error('Disconnected from mqtt server')
@@ -124,7 +124,6 @@ class UnRAIDServer(object):
     async def system_sensor_loop(self):
         while self.mqtt_connected:
             try:
-                self.logger.info("Publishing system uptime and CPU temperature...")
                 await parsers.system_uptime(self, create_config=True)
                 await parsers.cpu_temperature_avg(self, create_config=True)
             except Exception:
@@ -220,12 +219,10 @@ class UnRAIDServer(object):
                             self.share_parser_lastrun = current_time
 
                         if sub_channel not in self.mqtt_history:
-                            self.logger.info(f'Create config for {sub_channel}')
                             self.mqtt_history[sub_channel] = (time.time() - self.scan_interval)
                             self.loop.create_task(msg_parser(self, msg_data, create_config=True))
 
                         if self.scan_interval <= (time.time() - self.mqtt_history.get(sub_channel, time.time())):
-                            self.logger.info(f'Parse data for {sub_channel}')
                             self.mqtt_history[sub_channel] = time.time()
                             self.loop.create_task(msg_parser(self, msg_data, create_config=False))
 

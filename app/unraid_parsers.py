@@ -77,6 +77,7 @@ async def apcups(self, msg_data, create_config):
             timeleft_min = _to_int(_strip_html(str(time_raw)))
             nompower_w   = _to_int(_strip_html(str(nompwr_raw)))     # e.g. "900 W"
             # "180 W (20 %)" -> 20
+            load_w = _to_int(_strip_html(str(load_raw)))
             load_pct = 0
             m = re.search(r"\((\s*\d+)\s*%\)", _strip_html(str(load_raw)))
             if m:
@@ -89,6 +90,7 @@ async def apcups(self, msg_data, create_config):
                 "TIMELEFT": timeleft_min,
                 "NOMPOWER": nompower_w,
                 "LOADPCT": load_pct,
+                "LOADW": load_w,
             }
         except Exception:
             self.logger.exception("apcups: failed to parse array payload")

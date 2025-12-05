@@ -4,8 +4,6 @@ import html
 import json
 
 async def array_status(self, msg_data, create_config):
-    self.logger.debug("[array_status] Parsing array health from update2 stream")
-
     try:
         parsed = json.loads(msg_data)
         html_data = html.unescape(parsed['disk'][0])
@@ -26,7 +24,6 @@ async def array_status(self, msg_data, create_config):
             "icon": "mdi:server"
         }
 
-        self.logger.debug(f"[array_status] Array status: {state}")
         self.mqtt_publish(payload, "sensor", state, create_config=create_config)
 
     except Exception:
