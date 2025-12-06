@@ -114,6 +114,26 @@ README.md
 
 ---
 
+## Home Assistant dashboard templates
+
+The `templates/` folder contains copy/paste examples for the **modern Home Assistant dashboard editor** (a.k.a. “storage mode”, the default as of 2025). Even though the files are written as YAML for readability, each file mirrors the JSON structure that the HA GUI expects, so you can open the file, copy everything, and paste it directly into the *Raw configuration editor* of any dashboard.
+
+Available templates:
+
+* `unraid_power_dashboard.yaml` – tile-based UPS board with gauges, trend tiles, and a conditional alert.
+* `unraid_power_compact_dashboard.yaml` – text/tile hybrid UPS summary similar to the NAS stats card.
+* `unraid_nas_stats_dashboard.yaml` – Markdown-driven NAS overview (uptime, array health, log usage, cache, disk loop).
+* `unraid_overview_dashboard.yaml` – combines the NAS card and the UPS board into one page for “at a glance” monitoring.
+
+To use any template:
+
+1. In Home Assistant go to **Settings → Dashboards**, create (or open) a dashboard, choose **Edit dashboard**, then **Raw configuration editor**.
+2. Paste the contents of the template file. If you only want a single view, replace the whole document; otherwise merge just the `views:` entries into your existing JSON.
+3. Replace the placeholder entity IDs (the files use `sensor.nas_*`) with the IDs that match your MQTT discovery entities. For the NAS card you can also adjust the disk list (`[1,2,3,4]`) or add parity/cache rows.
+4. Save. The GUI will convert the YAML into the native storage JSON and the new cards will appear instantly.
+
+---
+
 ## Troubleshooting
 
 * **No MQTT device in HA**: confirm broker creds, that `Home Assistant → MQTT` is connected, and that the container can reach `<MQTT_HOST>`.
@@ -127,4 +147,4 @@ README.md
 ## Credits
 
 * Original author(s): IDmedia and contributors.
-* This fork by B0st0wn focuses on structure, resilience, and extra telemetry for Home Assistant.
+* This fork focuses on structure, resilience, and extra telemetry for Home Assistant.
