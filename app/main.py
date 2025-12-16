@@ -33,8 +33,16 @@ class UnRAIDServer(object):
         self.share_parser_interval = 3600
         self.csrf_token = ''
         self.unraid_cookie = ''
+        self.cookie_last_refresh = 0
+        self.cookie_refresh_interval = 1800  # Refresh session every 30 minutes
 
         self.mqtt_connected = False
+        self.mqtt_config = mqtt_config  # Store config for reconnection
+        self.reconnect_task = None
+        self.vm_task = None
+        self.unraid_task = None
+        self.sensor_task = None
+
         unraid_id = normalize_str(self.unraid_name)
         will_message = Message(f'unraid/{unraid_id}/connectivity/state', 'OFF', retain=True)
         self.mqtt_client = MQTTClient(self.unraid_name, will_message=will_message)
@@ -53,19 +61,66 @@ class UnRAIDServer(object):
         self.logger.info('Successfully connected to mqtt server')
         mover_payload = {'name': 'Mover'}
         self.mqtt_publish(mover_payload, 'button', state_value='OFF', create_config=True)
-        self.vm_task = asyncio.ensure_future(self.vm_sensor_loop())
         self.mqtt_connected = True
         self.mqtt_status(connected=True, create_config=True)
-        self.unraid_task = asyncio.ensure_future(self.ws_connect())
-        self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
+
+        # Start background tasks
+        self.start_background_tasks()
 
     def on_message(self, client, topic, payload, qos, properties):
         pass
 
     def on_disconnect(self, client, packet, exc=None):
         self.logger.error('Disconnected from mqtt server')
-        self.mqtt_status(connected=False)
         self.mqtt_connected = False
+
+        # Cancel all background tasks
+        self.cancel_background_tasks()
+
+        # Attempt to reconnect
+        if self.reconnect_task is None or self.reconnect_task.done():
+            self.logger.info('Scheduling MQTT reconnection...')
+            self.reconnect_task = asyncio.ensure_future(self.mqtt_reconnect())
+
+    def start_background_tasks(self):
+        """Start all background tasks for data collection"""
+        self.logger.info('Starting background tasks...')
+        self.vm_task = asyncio.ensure_future(self.vm_sensor_loop())
+        self.unraid_task = asyncio.ensure_future(self.ws_connect())
+        self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
+
+    def cancel_background_tasks(self):
+        """Cancel all background tasks"""
+        self.logger.info('Cancelling background tasks...')
+        tasks = [self.vm_task, self.unraid_task, self.sensor_task]
+        for task in tasks:
+            if task and not task.done():
+                task.cancel()
+
+    async def mqtt_reconnect(self):
+        """Reconnect to MQTT broker with exponential backoff"""
+        retry_delay = 5
+        max_retry_delay = 300  # Max 5 minutes between retries
+
+        while not self.mqtt_connected:
+            try:
+                self.logger.info(f'Attempting MQTT reconnection in {retry_delay} seconds...')
+                await asyncio.sleep(retry_delay)
+
+                mqtt_host = self.mqtt_config.get('host')
+                mqtt_port = self.mqtt_config.get('port', 1883)
+
+                self.logger.info('Reconnecting to mqtt server...')
+                await self.mqtt_client.connect(mqtt_host, mqtt_port)
+                # on_connect callback will set mqtt_connected = True and restart tasks
+                break
+
+            except ConnectionRefusedError:
+                self.logger.error('MQTT connection refused, retrying...')
+                retry_delay = min(retry_delay * 2, max_retry_delay)
+            except Exception as e:
+                self.logger.exception(f'Exception during MQTT reconnection: {e}')
+                retry_delay = min(retry_delay * 2, max_retry_delay)
 
     def mqtt_status(self, connected, create_config=False):
         status_payload = {
@@ -76,6 +131,11 @@ class UnRAIDServer(object):
         self.mqtt_publish(status_payload, 'binary_sensor', state_value, create_config=create_config)
 
     def mqtt_publish(self, payload, sensor_type, state_value, json_attributes=None, create_config=False, retain=False):
+        # Validate MQTT connection before publishing
+        if not self.mqtt_connected:
+            self.logger.warning(f'Skipping publish for {payload.get("name")} - MQTT not connected')
+            return
+
         unraid_id = normalize_str(self.unraid_name)
         sensor_id = normalize_str(payload["name"])
         unraid_sensor_id = f'{unraid_id}_{sensor_id}'
@@ -130,12 +190,43 @@ class UnRAIDServer(object):
                 self.logger.exception("Failed to publish system sensors.")
             await asyncio.sleep(self.scan_interval)
 
+    async def refresh_unraid_session(self):
+        """Refresh the Unraid session cookie"""
+        try:
+            payload = {
+                'username': self.unraid_username,
+                'password': self.unraid_password
+            }
+            async with httpx.AsyncClient() as http:
+                r = await http.post(f'{self.unraid_url}/login', data=payload, timeout=120)
+                self.unraid_cookie = r.headers.get('set-cookie')
+                self.cookie_last_refresh = time.time()
+                self.logger.info('Unraid session cookie refreshed')
+                return True
+        except Exception:
+            self.logger.exception('Failed to refresh Unraid session')
+            return False
+
     async def vm_sensor_loop(self):
         while self.mqtt_connected:
             try:
+                # Refresh session cookie if needed (every 30 minutes)
+                current_time = time.time()
+                if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                    await self.refresh_unraid_session()
+
                 async with httpx.AsyncClient() as http:
                     headers = {'Cookie': self.unraid_cookie}
                     r = await http.get(f'{self.unraid_url}/VMMachines.php', headers=headers)
+
+                    # Check if we got redirected to login (session expired)
+                    if '/login' in str(r.url):
+                        self.logger.warning('Session expired, refreshing cookie...')
+                        if await self.refresh_unraid_session():
+                            # Retry the request with new cookie
+                            headers = {'Cookie': self.unraid_cookie}
+                            r = await http.get(f'{self.unraid_url}/VMMachines.php', headers=headers)
+
                     await parsers.vms(self, r.text, create_config=False)
             except Exception:
                 self.logger.exception("Failed to fetch VM info")
