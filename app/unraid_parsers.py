@@ -9,7 +9,7 @@ import psutil
 import json
 
 from parsers.uptime import system_uptime
-from parsers.cpu import cpu_temperature_avg, cpuload
+from parsers.cpu import cpu_temperature_avg, cpu_utilization, cpuload
 from parsers.memory import update1
 from parsers.network import update3
 from parsers.tempsensors import temperature

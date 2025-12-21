@@ -42,6 +42,7 @@ class UnRAIDServer(object):
         self.vm_task = None
         self.unraid_task = None
         self.sensor_task = None
+        self.watchdog_task = None
 
         unraid_id = normalize_str(self.unraid_name)
         will_message = Message(f'unraid/{unraid_id}/connectivity/state', 'OFF', retain=True)
@@ -59,9 +60,9 @@ class UnRAIDServer(object):
 
     def on_connect(self, client, flags, rc, properties):
         self.logger.info('Successfully connected to mqtt server')
+        self.mqtt_connected = True
         mover_payload = {'name': 'Mover'}
         self.mqtt_publish(mover_payload, 'button', state_value='OFF', create_config=True)
-        self.mqtt_connected = True
         self.mqtt_status(connected=True, create_config=True)
 
         # Start background tasks
@@ -78,9 +79,7 @@ class UnRAIDServer(object):
         self.cancel_background_tasks()
 
         # Attempt to reconnect
-        if self.reconnect_task is None or self.reconnect_task.done():
-            self.logger.info('Scheduling MQTT reconnection...')
-            self.reconnect_task = asyncio.ensure_future(self.mqtt_reconnect())
+        self.schedule_mqtt_reconnect('disconnect callback')
 
     def start_background_tasks(self):
         """Start all background tasks for data collection"""
@@ -88,11 +87,14 @@ class UnRAIDServer(object):
         self.vm_task = asyncio.ensure_future(self.vm_sensor_loop())
         self.unraid_task = asyncio.ensure_future(self.ws_connect())
         self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
+        self.watchdog_task = asyncio.ensure_future(self.mqtt_watchdog_loop())
 
     def cancel_background_tasks(self):
         """Cancel all background tasks"""
         self.logger.info('Cancelling background tasks...')
         tasks = [self.vm_task, self.unraid_task, self.sensor_task]
+        if self.watchdog_task:
+            tasks.append(self.watchdog_task)
         for task in tasks:
             if task and not task.done():
                 task.cancel()
@@ -170,22 +172,62 @@ class UnRAIDServer(object):
             }
             create_config.update(config_fields)
 
-            self.mqtt_client.publish(f'homeassistant/{sensor_type}/{unraid_sensor_id}/config', json.dumps(create_config), retain=True)
+            try:
+                self.mqtt_client.publish(f'homeassistant/{sensor_type}/{unraid_sensor_id}/config', json.dumps(create_config), retain=True)
+            except Exception:
+                self.logger.exception('MQTT publish failed during discovery config')
+                self.mqtt_connected = False
+                self.schedule_mqtt_reconnect('publish failure')
+                return
 
         if state_value is not None:
-            self.mqtt_client.publish(f'unraid/{unraid_id}/{sensor_id}/state', state_value, retain=retain)
+            try:
+                self.mqtt_client.publish(f'unraid/{unraid_id}/{sensor_id}/state', state_value, retain=retain)
+            except Exception:
+                self.logger.exception('MQTT publish failed for state')
+                self.mqtt_connected = False
+                self.schedule_mqtt_reconnect('publish failure')
+                return
 
         if json_attributes:
-            self.mqtt_client.publish(f'unraid/{unraid_id}/{sensor_id}/attributes', json.dumps(json_attributes), retain=retain)
+            try:
+                self.mqtt_client.publish(f'unraid/{unraid_id}/{sensor_id}/attributes', json.dumps(json_attributes), retain=retain)
+            except Exception:
+                self.logger.exception('MQTT publish failed for attributes')
+                self.mqtt_connected = False
+                self.schedule_mqtt_reconnect('publish failure')
+                return
 
         if sensor_type == 'button':
             self.mqtt_client.subscribe(f'unraid/{unraid_id}/{sensor_id}/commands', qos=0, retain=retain)
+
+    def schedule_mqtt_reconnect(self, reason):
+        if self.reconnect_task is None or self.reconnect_task.done():
+            self.logger.info(f'Scheduling MQTT reconnection ({reason})...')
+            self.reconnect_task = asyncio.ensure_future(self.mqtt_reconnect())
+
+    def mqtt_is_connected(self):
+        is_connected = getattr(self.mqtt_client, 'is_connected', None)
+        if isinstance(is_connected, bool):
+            return is_connected
+        if callable(is_connected):
+            return is_connected()
+        return self.mqtt_connected
+
+    async def mqtt_watchdog_loop(self):
+        while True:
+            await asyncio.sleep(30)
+            if not self.mqtt_is_connected():
+                self.logger.warning('MQTT connection appears down; triggering reconnect')
+                self.mqtt_connected = False
+                self.schedule_mqtt_reconnect('watchdog')
 
     async def system_sensor_loop(self):
         while self.mqtt_connected:
             try:
                 await parsers.system_uptime(self, create_config=True)
                 await parsers.cpu_temperature_avg(self, create_config=True)
+                await parsers.cpu_utilization(self, create_config=True)
             except Exception:
                 self.logger.exception("Failed to publish system sensors.")
             await asyncio.sleep(self.scan_interval)
