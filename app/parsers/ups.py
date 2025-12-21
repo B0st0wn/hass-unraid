@@ -1,5 +1,6 @@
 from typing import Dict, Any
 import re
+import time
 from utils import normalize_str
 
 # Map apcupsd/raw keys -> normalized metric keys
@@ -117,5 +118,7 @@ def handle_ups(server, payload: Dict[str, Any], create_config: bool) -> None:
       - Publishes per-metric HA discovery entities
     """
     server_id = normalize_str(server.unraid_name)
+    server.last_ups_payload = payload
+    server.last_ups_time = time.time()
     publish_flat_topics(server.mqtt_client, "unraid", server_id, payload)
     publish_ha_entities(server, payload, create_config)

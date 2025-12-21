@@ -43,6 +43,10 @@ class UnRAIDServer(object):
         self.unraid_task = None
         self.sensor_task = None
         self.watchdog_task = None
+        self.ups_task = None
+        self.watchdog_failures = 0
+        self.last_ups_payload = None
+        self.last_ups_time = 0
 
         unraid_id = normalize_str(self.unraid_name)
         will_message = Message(f'unraid/{unraid_id}/connectivity/state', 'OFF', retain=True)
@@ -61,6 +65,7 @@ class UnRAIDServer(object):
     def on_connect(self, client, flags, rc, properties):
         self.logger.info('Successfully connected to mqtt server')
         self.mqtt_connected = True
+        self.watchdog_failures = 0
         mover_payload = {'name': 'Mover'}
         self.mqtt_publish(mover_payload, 'button', state_value='OFF', create_config=True)
         self.mqtt_status(connected=True, create_config=True)
@@ -88,11 +93,12 @@ class UnRAIDServer(object):
         self.unraid_task = asyncio.ensure_future(self.ws_connect())
         self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
         self.watchdog_task = asyncio.ensure_future(self.mqtt_watchdog_loop())
+        self.ups_task = asyncio.ensure_future(self.ups_refresh_loop())
 
     def cancel_background_tasks(self):
         """Cancel all background tasks"""
         self.logger.info('Cancelling background tasks...')
-        tasks = [self.vm_task, self.unraid_task, self.sensor_task]
+        tasks = [self.vm_task, self.unraid_task, self.sensor_task, self.ups_task]
         if self.watchdog_task:
             tasks.append(self.watchdog_task)
         for task in tasks:
@@ -217,10 +223,26 @@ class UnRAIDServer(object):
     async def mqtt_watchdog_loop(self):
         while True:
             await asyncio.sleep(30)
-            if not self.mqtt_is_connected():
+            if self.mqtt_is_connected():
+                self.watchdog_failures = 0
+                continue
+            self.watchdog_failures += 1
+            if self.watchdog_failures >= 3:
                 self.logger.warning('MQTT connection appears down; triggering reconnect')
+                self.watchdog_failures = 0
                 self.mqtt_connected = False
                 self.schedule_mqtt_reconnect('watchdog')
+
+    async def ups_refresh_loop(self):
+        while True:
+            await asyncio.sleep(self.scan_interval)
+            if not self.mqtt_connected:
+                continue
+            if not self.last_ups_payload:
+                continue
+            age = time.time() - self.last_ups_time
+            if age >= self.scan_interval:
+                parsers.handle_ups(self, self.last_ups_payload, create_config=False)
 
     async def system_sensor_loop(self):
         while self.mqtt_connected:
