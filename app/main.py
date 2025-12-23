@@ -26,6 +26,7 @@ class UnRAIDServer(object):
         self.unraid_name = unraid_config.get('name')
         self.unraid_username = unraid_config.get('username')
         self.unraid_password = unraid_config.get('password')
+        self.unraid_api_key = unraid_config.get('api_key')
         self.unraid_url = f'{unraid_protocol}{unraid_address}'
         self.unraid_ws = f'wss://{unraid_address}' if unraid_ssl else f'ws://{unraid_address}'
         self.scan_interval = unraid_config.get('scan_interval', 30)
@@ -38,18 +39,20 @@ class UnRAIDServer(object):
 
         self.mqtt_connected = False
         self.mqtt_config = mqtt_config  # Store config for reconnection
+        self.base_topic = mqtt_config.get('base_topic', 'unraid')
         self.reconnect_task = None
         self.vm_task = None
         self.unraid_task = None
         self.sensor_task = None
         self.watchdog_task = None
         self.ups_task = None
+        self.graphql_disk_task = None
         self.watchdog_failures = 0
         self.last_ups_payload = None
         self.last_ups_time = 0
 
         unraid_id = normalize_str(self.unraid_name)
-        will_message = Message(f'unraid/{unraid_id}/connectivity/state', 'OFF', retain=True)
+        will_message = Message(f'{self.base_topic}/{unraid_id}/connectivity/state', 'OFF', retain=True)
         self.mqtt_client = MQTTClient(self.unraid_name, will_message=will_message)
         asyncio.ensure_future(self.mqtt_connect(mqtt_config))
 
@@ -80,11 +83,11 @@ class UnRAIDServer(object):
         self.logger.error('Disconnected from mqtt server')
         self.mqtt_connected = False
 
-        # Cancel all background tasks
+        # Cancel all background tasks before attempting reconnection
         self.cancel_background_tasks()
 
-        # Attempt to reconnect
-        self.schedule_mqtt_reconnect('disconnect callback')
+        # Wait a moment for tasks to finish cancelling before reconnecting
+        asyncio.get_event_loop().call_later(2, lambda: self.schedule_mqtt_reconnect('disconnect callback'))
 
     def start_background_tasks(self):
         """Start all background tasks for data collection"""
@@ -94,16 +97,18 @@ class UnRAIDServer(object):
         self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
         self.watchdog_task = asyncio.ensure_future(self.mqtt_watchdog_loop())
         self.ups_task = asyncio.ensure_future(self.ups_refresh_loop())
+        self.graphql_disk_task = asyncio.ensure_future(self.graphql_disk_loop())
 
     def cancel_background_tasks(self):
         """Cancel all background tasks"""
         self.logger.info('Cancelling background tasks...')
-        tasks = [self.vm_task, self.unraid_task, self.sensor_task, self.ups_task]
-        if self.watchdog_task:
-            tasks.append(self.watchdog_task)
+        tasks = [self.vm_task, self.unraid_task, self.sensor_task, self.ups_task, self.watchdog_task, self.graphql_disk_task]
         for task in tasks:
             if task and not task.done():
-                task.cancel()
+                try:
+                    task.cancel()
+                except Exception as e:
+                    self.logger.warning(f'Error cancelling task: {e}')
 
     async def mqtt_reconnect(self):
         """Reconnect to MQTT broker with exponential backoff"""
@@ -160,11 +165,11 @@ class UnRAIDServer(object):
 
             create_config = payload
             if state_value is not None:
-                create_config['state_topic'] = f'unraid/{unraid_id}/{sensor_id}/state'
+                create_config['state_topic'] = f'{self.base_topic}/{unraid_id}/{sensor_id}/state'
             if json_attributes:
-                create_config['json_attributes_topic'] = f'unraid/{unraid_id}/{sensor_id}/attributes'
+                create_config['json_attributes_topic'] = f'{self.base_topic}/{unraid_id}/{sensor_id}/attributes'
             if sensor_type == 'button':
-                create_config['command_topic'] = f'unraid/{unraid_id}/{sensor_id}/commands'
+                create_config['command_topic'] = f'{self.base_topic}/{unraid_id}/{sensor_id}/commands'
 
             if not sensor_id.startswith(('connectivity', 'array', 'share_', 'disk_', 'ups_')):
                 expire_in_seconds = self.scan_interval * 4
@@ -188,7 +193,7 @@ class UnRAIDServer(object):
 
         if state_value is not None:
             try:
-                self.mqtt_client.publish(f'unraid/{unraid_id}/{sensor_id}/state', state_value, retain=retain)
+                self.mqtt_client.publish(f'{self.base_topic}/{unraid_id}/{sensor_id}/state', state_value, retain=retain)
             except Exception:
                 self.logger.exception('MQTT publish failed for state')
                 self.mqtt_connected = False
@@ -197,7 +202,7 @@ class UnRAIDServer(object):
 
         if json_attributes:
             try:
-                self.mqtt_client.publish(f'unraid/{unraid_id}/{sensor_id}/attributes', json.dumps(json_attributes), retain=retain)
+                self.mqtt_client.publish(f'{self.base_topic}/{unraid_id}/{sensor_id}/attributes', json.dumps(json_attributes), retain=retain)
             except Exception:
                 self.logger.exception('MQTT publish failed for attributes')
                 self.mqtt_connected = False
@@ -205,7 +210,7 @@ class UnRAIDServer(object):
                 return
 
         if sensor_type == 'button':
-            self.mqtt_client.subscribe(f'unraid/{unraid_id}/{sensor_id}/commands', qos=0, retain=retain)
+            self.mqtt_client.subscribe(f'{self.base_topic}/{unraid_id}/{sensor_id}/commands', qos=0, retain=retain)
 
     def schedule_mqtt_reconnect(self, reason):
         if self.reconnect_task is None or self.reconnect_task.done():
@@ -221,38 +226,51 @@ class UnRAIDServer(object):
         return self.mqtt_connected
 
     async def mqtt_watchdog_loop(self):
-        while True:
-            await asyncio.sleep(30)
-            if self.mqtt_is_connected():
-                self.watchdog_failures = 0
-                continue
-            self.watchdog_failures += 1
-            if self.watchdog_failures >= 3:
-                self.logger.warning('MQTT connection appears down; triggering reconnect')
-                self.watchdog_failures = 0
-                self.mqtt_connected = False
-                self.schedule_mqtt_reconnect('watchdog')
+        try:
+            while self.mqtt_connected:
+                await asyncio.sleep(30)
+                if self.mqtt_is_connected():
+                    self.watchdog_failures = 0
+                    continue
+                self.watchdog_failures += 1
+                if self.watchdog_failures >= 3:
+                    self.logger.warning('MQTT connection appears down; triggering reconnect')
+                    self.watchdog_failures = 0
+                    self.mqtt_connected = False
+                    self.schedule_mqtt_reconnect('watchdog')
+        except asyncio.CancelledError:
+            self.logger.info('Watchdog loop cancelled')
+            raise
 
     async def ups_refresh_loop(self):
-        while True:
-            await asyncio.sleep(self.scan_interval)
-            if not self.mqtt_connected:
-                continue
-            if not self.last_ups_payload:
-                continue
-            age = time.time() - self.last_ups_time
-            if age >= self.scan_interval:
-                parsers.handle_ups(self, self.last_ups_payload, create_config=False)
+        try:
+            while self.mqtt_connected:
+                await asyncio.sleep(self.scan_interval)
+                if not self.last_ups_payload:
+                    continue
+                age = time.time() - self.last_ups_time
+                if age >= self.scan_interval:
+                    try:
+                        parsers.handle_ups(self, self.last_ups_payload, create_config=False)
+                    except Exception:
+                        self.logger.exception("Failed to refresh UPS data")
+        except asyncio.CancelledError:
+            self.logger.info('UPS refresh loop cancelled')
+            raise
 
     async def system_sensor_loop(self):
-        while self.mqtt_connected:
-            try:
-                await parsers.system_uptime(self, create_config=True)
-                await parsers.cpu_temperature_avg(self, create_config=True)
-                await parsers.cpu_utilization(self, create_config=True)
-            except Exception:
-                self.logger.exception("Failed to publish system sensors.")
-            await asyncio.sleep(self.scan_interval)
+        try:
+            while self.mqtt_connected:
+                try:
+                    await parsers.system_uptime(self, create_config=True)
+                    await parsers.cpu_temperature_avg(self, create_config=True)
+                    await parsers.cpu_utilization(self, create_config=True)
+                except Exception:
+                    self.logger.exception("Failed to publish system sensors.")
+                await asyncio.sleep(self.scan_interval)
+        except asyncio.CancelledError:
+            self.logger.info('System sensor loop cancelled')
+            raise
 
     async def refresh_unraid_session(self):
         """Refresh the Unraid session cookie"""
@@ -271,30 +289,67 @@ class UnRAIDServer(object):
             self.logger.exception('Failed to refresh Unraid session')
             return False
 
+    async def graphql_disk_loop(self):
+        """Fetch disk usage data from GraphQL API (Unraid 7.2+)"""
+        try:
+            # Wait a bit before first run to let session establish
+            await asyncio.sleep(5)
+
+            while self.mqtt_connected:
+                try:
+                    # Refresh session cookie if needed (every 30 minutes)
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
+
+                    # Import here to avoid circular imports
+                    from parsers.graphql_disks import fetch_disk_data_graphql
+
+                    # Fetch disk data from GraphQL
+                    ini_data = await fetch_disk_data_graphql(self)
+
+                    if ini_data:
+                        # Parse using existing disk parser
+                        await parsers.disks(self, ini_data, create_config=True)
+                    else:
+                        self.logger.debug("GraphQL disk data fetch returned no data")
+
+                except Exception:
+                    self.logger.exception("Failed to fetch GraphQL disk info")
+
+                await asyncio.sleep(self.scan_interval)
+        except asyncio.CancelledError:
+            self.logger.info('GraphQL disk loop cancelled')
+            raise
+
     async def vm_sensor_loop(self):
-        while self.mqtt_connected:
-            try:
-                # Refresh session cookie if needed (every 30 minutes)
-                current_time = time.time()
-                if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
-                    await self.refresh_unraid_session()
+        try:
+            while self.mqtt_connected:
+                try:
+                    # Refresh session cookie if needed (every 30 minutes)
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
 
-                async with httpx.AsyncClient() as http:
-                    headers = {'Cookie': self.unraid_cookie}
-                    r = await http.get(f'{self.unraid_url}/VMMachines.php', headers=headers)
+                    async with httpx.AsyncClient() as http:
+                        headers = {'Cookie': self.unraid_cookie}
+                        r = await http.get(f'{self.unraid_url}/VMMachines.php', headers=headers, timeout=30)
 
-                    # Check if we got redirected to login (session expired)
-                    if '/login' in str(r.url):
-                        self.logger.warning('Session expired, refreshing cookie...')
-                        if await self.refresh_unraid_session():
-                            # Retry the request with new cookie
-                            headers = {'Cookie': self.unraid_cookie}
-                            r = await http.get(f'{self.unraid_url}/VMMachines.php', headers=headers)
+                        # Check if we got redirected to login (session expired)
+                        if '/login' in str(r.url):
+                            self.logger.warning('Session expired, refreshing cookie...')
+                            if await self.refresh_unraid_session():
+                                # Retry the request with new cookie
+                                headers = {'Cookie': self.unraid_cookie}
+                                r = await http.get(f'{self.unraid_url}/VMMachines.php', headers=headers, timeout=30)
 
-                    await parsers.vms(self, r.text, create_config=False)
-            except Exception:
-                self.logger.exception("Failed to fetch VM info")
-            await asyncio.sleep(self.scan_interval)
+                        await parsers.vms(self, r.text, create_config=False)
+                except Exception:
+                    self.logger.exception("Failed to fetch VM info")
+                await asyncio.sleep(self.scan_interval)
+        except asyncio.CancelledError:
+            self.logger.info('VM sensor loop cancelled')
+            raise
 
     async def mqtt_connect(self, mqtt_config):
         mqtt_host = mqtt_config.get('host')
@@ -322,75 +377,107 @@ class UnRAIDServer(object):
                 await asyncio.sleep(30)
 
     async def ws_connect(self):
-        while self.mqtt_connected:
-            self.logger.info('Connecting to unraid...')
-            last_msg = ''
-            try:
-                payload = {
-                    'username': self.unraid_username,
-                    'password': self.unraid_password
-                }
+        try:
+            while self.mqtt_connected:
+                self.logger.info('Connecting to unraid...')
+                last_msg = ''
+                try:
+                    payload = {
+                        'username': self.unraid_username,
+                        'password': self.unraid_password
+                    }
 
-                async with httpx.AsyncClient() as http:
-                    r = await http.post(f'{self.unraid_url}/login', data=payload, timeout=120)
-                    self.unraid_cookie = r.headers.get('set-cookie')
-                    r = await http.get(f'{self.unraid_url}/Dashboard', follow_redirects=True, timeout=120)
-                    tree = etree.HTML(r.text)
-                    version_elem = tree.xpath('.//div[@class="logo"]/text()[preceding-sibling::a]')
-                    self.unraid_version = ''.join(c for c in ''.join(version_elem) if c.isdigit() or c == '.')
+                    async with httpx.AsyncClient() as http:
+                        r = await http.post(f'{self.unraid_url}/login', data=payload, timeout=120)
+                        self.unraid_cookie = r.headers.get('set-cookie')
+                        r = await http.get(f'{self.unraid_url}/Dashboard', follow_redirects=True, timeout=120)
+                        tree = etree.HTML(r.text)
+                        version_elem = tree.xpath('.//div[@class="logo"]/text()[preceding-sibling::a]')
+                        self.unraid_version = ''.join(c for c in ''.join(version_elem) if c.isdigit() or c == '.')
 
-                headers = {'Cookie': self.unraid_cookie}
-                subprotocols = ['ws+meta.nchan']
+                    headers = {'Cookie': self.unraid_cookie}
+                    subprotocols = ['ws+meta.nchan']
 
-                sub_channels = {
-                    'update2': parsers.array_status,
-                    'session': parsers.session,
-                    'cpuload': parsers.cpuload,
-                    'disks': parsers.disks,
-                    'parity': parsers.parity,
-                    'shares': parsers.shares,
-                    'update1': parsers.update1,
-                    'temperature': parsers.temperature,
-                    'apcups': parsers.apcups
-                }
+                    sub_channels = {
+                        'update2': parsers.array_status,
+                        'session': parsers.session,
+                        'cpuload': parsers.cpuload,
+                        'disks': parsers.disks,
+                        'parity': parsers.parity,
+                        'shares': parsers.shares,
+                        'update1': parsers.update1,
+                        'temperature': parsers.temperature,
+                        'apcups': parsers.apcups
+                    }
 
-                websocket_url = f'{self.unraid_ws}/sub/{",".join(sub_channels)}'
-                async with websockets.connect(websocket_url, subprotocols=subprotocols, extra_headers=headers) as websocket:
-                    self.logger.info('Successfully connected to unraid')
+                    websocket_url = f'{self.unraid_ws}/sub/{",".join(sub_channels)}'
+                    async with websockets.connect(websocket_url, subprotocols=subprotocols, extra_headers=headers) as websocket:
+                        self.logger.info('Successfully connected to unraid')
 
-                    while self.mqtt_connected:
-                        data = await asyncio.wait_for(websocket.recv(), timeout=120)
-                        last_msg = data
-                        msg_data = data.replace('\00', ' ').split('\n\n', 1)[1]
-                        msg_ids = re.findall(r'([-\[\d\],]+,[-\[\d\],]*)|$', data)[0].split(',')
-                        sub_channel = next(sub for (sub, msg) in zip(sub_channels, msg_ids) if msg.startswith('['))
-                        msg_parser = sub_channels.get(sub_channel, parsers.default)
+                        while self.mqtt_connected:
+                            try:
+                                data = await asyncio.wait_for(websocket.recv(), timeout=120)
+                                last_msg = data
 
-                        if sub_channel == 'shares':
-                            current_time = time.time()
-                            time_passed = current_time - self.share_parser_lastrun
-                            if time_passed <= self.share_parser_interval:
+                                # Parse message data with error handling
+                                try:
+                                    parts = data.replace('\00', ' ').split('\n\n', 1)
+                                    if len(parts) < 2:
+                                        self.logger.warning(f'Invalid message format: {data[:100]}')
+                                        continue
+                                    msg_data = parts[1].strip()
+
+                                    msg_ids = re.findall(r'([-\[\d\],]+,[-\[\d\],]*)|$', data)[0].split(',')
+                                    sub_channel = next((sub for (sub, msg) in zip(sub_channels, msg_ids) if msg.startswith('[')), None)
+
+                                    if not sub_channel:
+                                        self.logger.debug(f'Could not identify channel for message: {data[:100]}')
+                                        continue
+
+                                    msg_parser = sub_channels.get(sub_channel, parsers.default)
+
+                                    if msg_data in ('', '[]'):
+                                        continue
+
+                                    if sub_channel == 'shares':
+                                        current_time = time.time()
+                                        time_passed = current_time - self.share_parser_lastrun
+                                        if time_passed <= self.share_parser_interval:
+                                            continue
+                                        self.share_parser_lastrun = current_time
+
+                                    if sub_channel not in self.mqtt_history:
+                                        self.mqtt_history[sub_channel] = (time.time() - self.scan_interval)
+                                        self.loop.create_task(msg_parser(self, msg_data, create_config=True))
+
+                                    if self.scan_interval <= (time.time() - self.mqtt_history.get(sub_channel, time.time())):
+                                        self.mqtt_history[sub_channel] = time.time()
+                                        self.loop.create_task(msg_parser(self, msg_data, create_config=False))
+
+                                except (ValueError, IndexError, StopIteration) as e:
+                                    self.logger.warning(f'Error parsing websocket message: {e}')
+                                    self.logger.debug(f'Problematic message: {data[:200]}')
+                                    continue
+
+                            except asyncio.TimeoutError:
+                                self.logger.warning('WebSocket recv timeout, connection may be stale')
                                 continue
-                            self.share_parser_lastrun = current_time
 
-                        if sub_channel not in self.mqtt_history:
-                            self.mqtt_history[sub_channel] = (time.time() - self.scan_interval)
-                            self.loop.create_task(msg_parser(self, msg_data, create_config=True))
-
-                        if self.scan_interval <= (time.time() - self.mqtt_history.get(sub_channel, time.time())):
-                            self.mqtt_history[sub_channel] = time.time()
-                            self.loop.create_task(msg_parser(self, msg_data, create_config=False))
-
-            except (httpx.ConnectTimeout, httpx.ConnectError):
-                self.logger.error('Unraid connection timeout...')
-                self.mqtt_status(connected=False)
-                await asyncio.sleep(30)
-            except Exception:
-                self.logger.exception('Unraid connection failed...')
-                self.logger.error('Last message received:')
-                self.logger.error(last_msg)
-                self.mqtt_status(connected=False)
-                await asyncio.sleep(30)
+                except (httpx.ConnectTimeout, httpx.ConnectError):
+                    if self.mqtt_connected:
+                        self.logger.error('Unraid connection timeout...')
+                        self.mqtt_status(connected=False)
+                    await asyncio.sleep(30)
+                except Exception:
+                    if self.mqtt_connected:
+                        self.logger.exception('Unraid connection failed...')
+                        self.logger.error('Last message received:')
+                        self.logger.error(last_msg)
+                        self.mqtt_status(connected=False)
+                    await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            self.logger.info('WebSocket connection loop cancelled')
+            raise
 
 
 if __name__ == '__main__':

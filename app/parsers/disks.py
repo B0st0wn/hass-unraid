@@ -6,6 +6,10 @@ async def disks(self, msg_data, create_config):
     prefs = Preferences(msg_data)
     disks = prefs.as_dict()
 
+    if not disks:
+        self.logger.debug("No disk data received in message")
+        return
+
     for n in disks:
         disk = disks[n]
         disk_name = disk['name']
@@ -30,10 +34,20 @@ async def disks(self, msg_data, create_config):
         try:
             BYTES_PER_SECTOR = 1024
             BYTES_IN_TB = 1_000_000_000_000
-            disk_size_tb = round((int(disk.get('sizesb', 0)) * BYTES_PER_SECTOR) / BYTES_IN_TB, 2)
-            disk_used_tb = round((int(disk.get('fsused', 0)) * BYTES_PER_SECTOR) / BYTES_IN_TB, 2)
-            disk_free_tb = round((int(disk.get('fsfree', 0)) * BYTES_PER_SECTOR) / BYTES_IN_TB, 2)
-        except (ValueError, TypeError):
+
+            # Try multiple field name variations
+            # Old WebSocket format: sizesb, fsused, fsfree (lowercase)
+            # GraphQL format: sizesb, fsused, fsfree (converted from GraphQL)
+            # Some versions may use camelCase: sizeSb, fsUsed, fsFree
+            size_sb = disk.get('sizesb') or disk.get('sizeSb') or disk.get('size') or 0
+            fs_used = disk.get('fsused') or disk.get('fsUsed') or 0
+            fs_free = disk.get('fsfree') or disk.get('fsFree') or 0
+
+            disk_size_tb = round((int(size_sb) * BYTES_PER_SECTOR) / BYTES_IN_TB, 2)
+            disk_used_tb = round((int(fs_used) * BYTES_PER_SECTOR) / BYTES_IN_TB, 2)
+            disk_free_tb = round((int(fs_free) * BYTES_PER_SECTOR) / BYTES_IN_TB, 2)
+        except (ValueError, TypeError) as e:
+            self.logger.debug(f"Error calculating disk sizes for {disk_name}: {e}")
             disk_size_tb = disk_used_tb = disk_free_tb = 0
 
         if disk_size_tb:

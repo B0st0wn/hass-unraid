@@ -120,5 +120,5 @@ def handle_ups(server, payload: Dict[str, Any], create_config: bool) -> None:
     server_id = normalize_str(server.unraid_name)
     server.last_ups_payload = payload
     server.last_ups_time = time.time()
-    publish_flat_topics(server.mqtt_client, "unraid", server_id, payload)
+    publish_flat_topics(server.mqtt_client, server.base_topic, server_id, payload)
     publish_ha_entities(server, payload, create_config)

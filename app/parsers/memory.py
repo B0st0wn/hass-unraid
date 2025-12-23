@@ -94,7 +94,7 @@ async def update1(self, msg_data, create_config):
                     'icon': 'mdi:memory',
                     'state_class': 'measurement'
                 }
-                self.mqtt_publish(payload, 'sensor', ram_usage['System'], create_config=create_config)
+                self.mqtt_publish(payload, 'sensor', ram_usage['System'], create_config=create_config, retain=True)
                 published_any = True
             elif ram_usage:
                 first_value = next(iter(ram_usage.values()))
@@ -104,7 +104,7 @@ async def update1(self, msg_data, create_config):
                     'icon': 'mdi:memory',
                     'state_class': 'measurement'
                 }
-                self.mqtt_publish(payload, 'sensor', first_value, create_config=create_config)
+                self.mqtt_publish(payload, 'sensor', first_value, create_config=create_config, retain=True)
                 published_any = True
 
         sys_usage = _extract_sys_usage(parsed)
@@ -116,7 +116,7 @@ async def update1(self, msg_data, create_config):
                 'icon': 'mdi:memory',
                 'state_class': 'measurement'
             }
-            self.mqtt_publish(payload, 'sensor', sys_value, create_config=create_config)
+            self.mqtt_publish(payload, 'sensor', sys_value, create_config=create_config, retain=True)
             published_any = True
 
         if published_any:
@@ -134,7 +134,7 @@ async def update1(self, msg_data, create_config):
                 'icon': 'mdi:memory',
                 'state_class': 'measurement'
             }
-            self.mqtt_publish(payload, 'sensor', memory_value, create_config=create_config)
+            self.mqtt_publish(payload, 'sensor', memory_value, create_config=create_config, retain=True)
             published_any = True
     else:
         for memory_name, memory_usage in zip(memory_categories, matches):
@@ -147,7 +147,7 @@ async def update1(self, msg_data, create_config):
                     'icon': 'mdi:memory',
                     'state_class': 'measurement'
                 }
-                self.mqtt_publish(payload, 'sensor', memory_value, create_config=create_config)
+                self.mqtt_publish(payload, 'sensor', memory_value, create_config=create_config, retain=True)
                 published_any = True
 
     if not published_any:
