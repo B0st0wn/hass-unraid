@@ -47,6 +47,8 @@ class UnRAIDServer(object):
         self.watchdog_task = None
         self.ups_task = None
         self.graphql_disk_task = None
+        self.http_memory_task = None
+        self.http_ups_task = None
         self.watchdog_failures = 0
         self.last_ups_payload = None
         self.last_ups_time = 0
@@ -96,13 +98,14 @@ class UnRAIDServer(object):
         self.unraid_task = asyncio.ensure_future(self.ws_connect())
         self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
         self.watchdog_task = asyncio.ensure_future(self.mqtt_watchdog_loop())
-        self.ups_task = asyncio.ensure_future(self.ups_refresh_loop())
         self.graphql_disk_task = asyncio.ensure_future(self.graphql_disk_loop())
+        self.http_memory_task = asyncio.ensure_future(self.http_memory_loop())
+        self.http_ups_task = asyncio.ensure_future(self.http_ups_loop())
 
     def cancel_background_tasks(self):
         """Cancel all background tasks"""
         self.logger.info('Cancelling background tasks...')
-        tasks = [self.vm_task, self.unraid_task, self.sensor_task, self.ups_task, self.watchdog_task, self.graphql_disk_task]
+        tasks = [self.vm_task, self.unraid_task, self.sensor_task, self.watchdog_task, self.graphql_disk_task, self.http_memory_task, self.http_ups_task]
         for task in tasks:
             if task and not task.done():
                 try:
@@ -242,20 +245,58 @@ class UnRAIDServer(object):
             self.logger.info('Watchdog loop cancelled')
             raise
 
-    async def ups_refresh_loop(self):
+    async def http_memory_loop(self):
+        """Poll Unraid HTTP endpoints for memory usage data (RAM, Flash, Log, Docker)"""
         try:
+            # Wait for session to establish
+            await asyncio.sleep(10)
+
             while self.mqtt_connected:
+                try:
+                    # Refresh session cookie if needed
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
+
+                    # Import parser
+                    from parsers.http_memory import fetch_memory_http
+
+                    # Fetch and publish memory data
+                    await fetch_memory_http(self, create_config=True)
+
+                except Exception:
+                    self.logger.exception("Failed to fetch HTTP memory data")
+
                 await asyncio.sleep(self.scan_interval)
-                if not self.last_ups_payload:
-                    continue
-                age = time.time() - self.last_ups_time
-                if age >= self.scan_interval:
-                    try:
-                        parsers.handle_ups(self, self.last_ups_payload, create_config=False)
-                    except Exception:
-                        self.logger.exception("Failed to refresh UPS data")
         except asyncio.CancelledError:
-            self.logger.info('UPS refresh loop cancelled')
+            self.logger.info('HTTP memory loop cancelled')
+            raise
+
+    async def http_ups_loop(self):
+        """Poll Unraid HTTP endpoints for UPS data"""
+        try:
+            # Wait for session to establish
+            await asyncio.sleep(12)
+
+            while self.mqtt_connected:
+                try:
+                    # Refresh session cookie if needed
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
+
+                    # Import parser
+                    from parsers.http_ups import fetch_ups_http
+
+                    # Fetch and publish UPS data
+                    await fetch_ups_http(self, create_config=True)
+
+                except Exception:
+                    self.logger.exception("Failed to fetch HTTP UPS data")
+
+                await asyncio.sleep(self.scan_interval)
+        except asyncio.CancelledError:
+            self.logger.info('HTTP UPS loop cancelled')
             raise
 
     async def system_sensor_loop(self):
