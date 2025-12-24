@@ -99,13 +99,14 @@ class UnRAIDServer(object):
         self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
         self.watchdog_task = asyncio.ensure_future(self.mqtt_watchdog_loop())
         self.graphql_disk_task = asyncio.ensure_future(self.graphql_disk_loop())
-        self.http_memory_task = asyncio.ensure_future(self.http_memory_loop())
+        # Memory data comes via WebSocket only - HTTP polling won't work
+        # self.http_memory_task = asyncio.ensure_future(self.http_memory_loop())
         self.http_ups_task = asyncio.ensure_future(self.http_ups_loop())
 
     def cancel_background_tasks(self):
         """Cancel all background tasks"""
         self.logger.info('Cancelling background tasks...')
-        tasks = [self.vm_task, self.unraid_task, self.sensor_task, self.watchdog_task, self.graphql_disk_task, self.http_memory_task, self.http_ups_task]
+        tasks = [self.vm_task, self.unraid_task, self.sensor_task, self.watchdog_task, self.graphql_disk_task, self.http_ups_task]
         for task in tasks:
             if task and not task.done():
                 try:
@@ -506,15 +507,15 @@ class UnRAIDServer(object):
 
                 except (httpx.ConnectTimeout, httpx.ConnectError):
                     if self.mqtt_connected:
-                        self.logger.error('Unraid connection timeout...')
-                        self.mqtt_status(connected=False)
+                        self.logger.error('Unraid WebSocket connection timeout, will retry...')
+                        # Don't set connectivity to False - we have HTTP polling as backup
                     await asyncio.sleep(30)
                 except Exception:
                     if self.mqtt_connected:
-                        self.logger.exception('Unraid connection failed...')
+                        self.logger.exception('Unraid WebSocket connection failed, will retry...')
                         self.logger.error('Last message received:')
                         self.logger.error(last_msg)
-                        self.mqtt_status(connected=False)
+                        # Don't set connectivity to False - we have HTTP polling as backup
                     await asyncio.sleep(30)
         except asyncio.CancelledError:
             self.logger.info('WebSocket connection loop cancelled')

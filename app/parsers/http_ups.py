@@ -87,7 +87,7 @@ def extract_ups_from_html(server, html: str) -> Optional[Dict[str, any]]:
             ups_data['STATUS'] = status_text
             break
 
-    # Pattern 3: Extract battery percentage
+    # Pattern 3: Extract battery percentage (validate range)
     battery_patterns = [
         r'Battery[^:]*:[^<]*?(\d+)\s*%',
         r'Charge[^:]*:[^<]*?(\d+)\s*%',
@@ -96,8 +96,14 @@ def extract_ups_from_html(server, html: str) -> Optional[Dict[str, any]]:
     for pattern in battery_patterns:
         battery_match = re.search(pattern, html, re.IGNORECASE)
         if battery_match:
-            ups_data['BCHARGE'] = int(battery_match.group(1))
-            break
+            battery_val = int(battery_match.group(1))
+            # Validate: battery should be 0-100%
+            if 0 <= battery_val <= 100:
+                ups_data['BCHARGE'] = battery_val
+                server.logger.info(f"HTTP UPS: Battery={battery_val}%")
+                break
+            else:
+                server.logger.debug(f"HTTP UPS: Rejected battery={battery_val}% (out of range)")
 
     # Pattern 4: Extract time left
     time_patterns = [
@@ -107,10 +113,14 @@ def extract_ups_from_html(server, html: str) -> Optional[Dict[str, any]]:
     for pattern in time_patterns:
         time_match = re.search(pattern, html, re.IGNORECASE)
         if time_match:
-            ups_data['TIMELEFT'] = int(float(time_match.group(1)))
-            break
+            time_val = int(float(time_match.group(1)))
+            # Validate: time left should be reasonable (0-999 minutes)
+            if 0 <= time_val <= 999:
+                ups_data['TIMELEFT'] = time_val
+                server.logger.info(f"HTTP UPS: Time left={time_val} min")
+                break
 
-    # Pattern 5: Extract load percentage and watts
+    # Pattern 5: Extract load percentage and watts (validate range)
     load_patterns = [
         r'Load[^:]*:[^<]*?(\d+)\s*W\s*\((\d+)\s*%\)',  # "180 W (20 %)"
         r'Load[^:]*:[^<]*?(\d+)\s*%',  # Just percentage
@@ -121,17 +131,28 @@ def extract_ups_from_html(server, html: str) -> Optional[Dict[str, any]]:
         if load_match:
             if load_match.lastindex >= 2:
                 # Has both watts and percentage
-                ups_data['LOADW'] = int(load_match.group(1))
-                ups_data['LOADPCT'] = int(load_match.group(2))
+                watts = int(load_match.group(1))
+                pct = int(load_match.group(2))
+                # Validate: load should be 0-100%, watts should be reasonable
+                if 0 <= pct <= 100 and 0 <= watts <= 10000:
+                    ups_data['LOADW'] = watts
+                    ups_data['LOADPCT'] = pct
+                    server.logger.info(f"HTTP UPS: Load={pct}% ({watts}W)")
+                    break
             else:
                 # Just percentage
-                ups_data['LOADPCT'] = int(load_match.group(1))
-            break
+                pct = int(load_match.group(1))
+                if 0 <= pct <= 100:
+                    ups_data['LOADPCT'] = pct
+                    server.logger.info(f"HTTP UPS: Load={pct}%")
+                    break
 
     # Pattern 6: Extract nominal power
     power_match = re.search(r'Nominal\s+Power[^:]*:[^<]*?(\d+)\s*W', html, re.IGNORECASE)
     if power_match:
-        ups_data['NOMPOWER'] = int(power_match.group(1))
+        power_val = int(power_match.group(1))
+        if 0 < power_val <= 10000:  # Reasonable power range
+            ups_data['NOMPOWER'] = power_val
 
     # Pattern 7: Extract voltages
     voltage_patterns = {
@@ -142,11 +163,15 @@ def extract_ups_from_html(server, html: str) -> Optional[Dict[str, any]]:
     for key, pattern in voltage_patterns.items():
         volt_match = re.search(pattern, html, re.IGNORECASE)
         if volt_match:
-            ups_data[key] = float(volt_match.group(1))
+            volt_val = float(volt_match.group(1))
+            # Validate: voltage should be reasonable (0-500V)
+            if 0 < volt_val <= 500:
+                ups_data[key] = volt_val
 
     # Only return data if we found at least some key fields
     if len(ups_data) >= 2:
-        server.logger.debug(f"HTTP UPS: Extracted {len(ups_data)} fields: {list(ups_data.keys())}")
+        server.logger.info(f"HTTP UPS: Extracted {len(ups_data)} fields: {list(ups_data.keys())}")
         return ups_data
 
+    server.logger.debug(f"HTTP UPS: Insufficient data found ({len(ups_data)} fields)")
     return None
