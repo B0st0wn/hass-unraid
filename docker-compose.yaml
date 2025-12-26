@@ -5,6 +5,8 @@ services:
     restart: always
     environment:
       - TZ=America/New_York
+      - UPS_SCAN_INTERVAL=15
+      - SYSTEM_SCAN_INTERVAL=15
     volumes:
       - './data:/data'
     labels:

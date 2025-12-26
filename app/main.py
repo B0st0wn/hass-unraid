@@ -30,6 +30,9 @@ class UnRAIDServer(object):
         self.unraid_url = f'{unraid_protocol}{unraid_address}'
         self.unraid_ws = f'wss://{unraid_address}' if unraid_ssl else f'ws://{unraid_address}'
         self.scan_interval = unraid_config.get('scan_interval', 30)
+        # Support environment variable overrides for faster real-time updates
+        self.ups_scan_interval = int(os.getenv('UPS_SCAN_INTERVAL', unraid_config.get('ups_scan_interval', 30)))
+        self.system_scan_interval = int(os.getenv('SYSTEM_SCAN_INTERVAL', unraid_config.get('system_scan_interval', 30)))
         self.share_parser_lastrun = 0
         self.share_parser_interval = 3600
         self.csrf_token = ''
@@ -47,6 +50,12 @@ class UnRAIDServer(object):
         self.watchdog_task = None
         self.ups_task = None
         self.graphql_disk_task = None
+        self.graphql_docker_task = None
+        self.graphql_vms_task = None
+        self.graphql_array_task = None
+        self.graphql_shares_task = None
+        self.graphql_ups_task = None
+        self.graphql_system_task = None
         self.http_memory_task = None
         self.http_ups_task = None
         self.watchdog_failures = 0
@@ -94,19 +103,42 @@ class UnRAIDServer(object):
     def start_background_tasks(self):
         """Start all background tasks for data collection"""
         self.logger.info('Starting background tasks...')
-        self.vm_task = asyncio.ensure_future(self.vm_sensor_loop())
-        self.unraid_task = asyncio.ensure_future(self.ws_connect())
+
+        # Choose between WebSocket or GraphQL mode
+        # Set USE_GRAPHQL=true in environment to use GraphQL instead of WebSocket
+        use_graphql = os.getenv('USE_GRAPHQL', 'true').lower() == 'true'
+
+        if use_graphql:
+            self.logger.info('Using GraphQL mode for data collection')
+            # GraphQL-based data collection
+            self.graphql_disk_task = asyncio.ensure_future(self.graphql_disk_loop())
+            self.graphql_docker_task = asyncio.ensure_future(self.graphql_docker_loop())
+            self.graphql_vms_task = asyncio.ensure_future(self.graphql_vms_loop())
+            self.graphql_array_task = asyncio.ensure_future(self.graphql_array_loop())
+            self.graphql_shares_task = asyncio.ensure_future(self.graphql_shares_loop())
+            self.graphql_ups_task = asyncio.ensure_future(self.graphql_ups_loop())
+            self.graphql_system_task = asyncio.ensure_future(self.graphql_system_loop())
+        else:
+            self.logger.info('Using WebSocket mode for data collection')
+            # Legacy WebSocket-based data collection
+            self.unraid_task = asyncio.ensure_future(self.ws_connect())
+            self.vm_task = asyncio.ensure_future(self.vm_sensor_loop())
+            self.graphql_disk_task = asyncio.ensure_future(self.graphql_disk_loop())
+            self.http_ups_task = asyncio.ensure_future(self.http_ups_loop())
+
+        # System sensors always run (uses local psutil)
         self.sensor_task = asyncio.ensure_future(self.system_sensor_loop())
         self.watchdog_task = asyncio.ensure_future(self.mqtt_watchdog_loop())
-        self.graphql_disk_task = asyncio.ensure_future(self.graphql_disk_loop())
-        # Memory data comes via WebSocket only - HTTP polling won't work
-        # self.http_memory_task = asyncio.ensure_future(self.http_memory_loop())
-        self.http_ups_task = asyncio.ensure_future(self.http_ups_loop())
 
     def cancel_background_tasks(self):
         """Cancel all background tasks"""
         self.logger.info('Cancelling background tasks...')
-        tasks = [self.vm_task, self.unraid_task, self.sensor_task, self.watchdog_task, self.graphql_disk_task, self.http_ups_task]
+        tasks = [
+            self.vm_task, self.unraid_task, self.sensor_task, self.watchdog_task,
+            self.graphql_disk_task, self.graphql_docker_task, self.graphql_vms_task,
+            self.graphql_array_task, self.graphql_shares_task, self.graphql_ups_task,
+            self.graphql_system_task, self.http_ups_task
+        ]
         for task in tasks:
             if task and not task.done():
                 try:
@@ -145,7 +177,7 @@ class UnRAIDServer(object):
             'device_class': 'connectivity'
         }
         state_value = 'ON' if connected else 'OFF'
-        self.mqtt_publish(status_payload, 'binary_sensor', state_value, create_config=create_config)
+        self.mqtt_publish(status_payload, 'binary_sensor', state_value, create_config=create_config, retain=True)
 
     def mqtt_publish(self, payload, sensor_type, state_value, json_attributes=None, create_config=False, retain=False):
         # Validate MQTT connection before publishing
@@ -362,6 +394,146 @@ class UnRAIDServer(object):
                 await asyncio.sleep(self.scan_interval)
         except asyncio.CancelledError:
             self.logger.info('GraphQL disk loop cancelled')
+            raise
+
+    async def graphql_docker_loop(self):
+        """Fetch Docker container data from GraphQL API (Unraid 7.2+)"""
+        try:
+            await asyncio.sleep(5)
+
+            while self.mqtt_connected:
+                try:
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
+
+                    from parsers.graphql_docker import docker_containers
+
+                    await docker_containers(self, create_config=True)
+
+                except Exception:
+                    self.logger.exception("Failed to fetch GraphQL Docker info")
+
+                await asyncio.sleep(self.scan_interval)
+        except asyncio.CancelledError:
+            self.logger.info('GraphQL Docker loop cancelled')
+            raise
+
+    async def graphql_vms_loop(self):
+        """Fetch VM data from GraphQL API (Unraid 7.2+)"""
+        try:
+            await asyncio.sleep(5)
+
+            while self.mqtt_connected:
+                try:
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
+
+                    from parsers.graphql_vms import vms_graphql
+
+                    await vms_graphql(self, create_config=True)
+
+                except Exception:
+                    self.logger.exception("Failed to fetch GraphQL VM info")
+
+                await asyncio.sleep(self.scan_interval)
+        except asyncio.CancelledError:
+            self.logger.info('GraphQL VMs loop cancelled')
+            raise
+
+    async def graphql_array_loop(self):
+        """Fetch array status and parity data from GraphQL API (Unraid 7.2+)"""
+        try:
+            await asyncio.sleep(5)
+
+            while self.mqtt_connected:
+                try:
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
+
+                    from parsers.graphql_array import array_status_graphql, parity_history_graphql
+
+                    await array_status_graphql(self, create_config=True)
+                    await parity_history_graphql(self, create_config=True)
+
+                except Exception:
+                    self.logger.exception("Failed to fetch GraphQL array info")
+
+                await asyncio.sleep(self.scan_interval)
+        except asyncio.CancelledError:
+            self.logger.info('GraphQL array loop cancelled')
+            raise
+
+    async def graphql_shares_loop(self):
+        """Fetch shares data from GraphQL API (Unraid 7.2+)"""
+        try:
+            await asyncio.sleep(5)
+
+            while self.mqtt_connected:
+                try:
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
+
+                    from parsers.graphql_shares import shares_graphql
+
+                    await shares_graphql(self, create_config=True)
+
+                except Exception:
+                    self.logger.exception("Failed to fetch GraphQL shares info")
+
+                # Shares update less frequently (once per hour like the original)
+                await asyncio.sleep(self.share_parser_interval)
+        except asyncio.CancelledError:
+            self.logger.info('GraphQL shares loop cancelled')
+            raise
+
+    async def graphql_ups_loop(self):
+        """Fetch UPS data from GraphQL API (Unraid 7.2+)"""
+        try:
+            await asyncio.sleep(5)
+
+            while self.mqtt_connected:
+                try:
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
+
+                    from parsers.graphql_ups import ups_graphql
+
+                    await ups_graphql(self, create_config=True)
+
+                except Exception:
+                    self.logger.exception("Failed to fetch GraphQL UPS info")
+
+                await asyncio.sleep(self.ups_scan_interval)
+        except asyncio.CancelledError:
+            self.logger.info('GraphQL UPS loop cancelled')
+            raise
+
+    async def graphql_system_loop(self):
+        """Fetch system metrics (RAM, Flash, Temps, Fans) via HTTP (Unraid 7.2+)"""
+        try:
+            await asyncio.sleep(5)
+
+            while self.mqtt_connected:
+                try:
+                    current_time = time.time()
+                    if current_time - self.cookie_last_refresh > self.cookie_refresh_interval:
+                        await self.refresh_unraid_session()
+
+                    from parsers.graphql_system import system_metrics_graphql
+
+                    await system_metrics_graphql(self, create_config=True)
+
+                except Exception:
+                    self.logger.exception("Failed to fetch system metrics")
+
+                await asyncio.sleep(self.system_scan_interval)
+        except asyncio.CancelledError:
+            self.logger.info('GraphQL system loop cancelled')
             raise
 
     async def vm_sensor_loop(self):

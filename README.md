@@ -1,18 +1,20 @@
 # hass-unraid — Unraid → Home Assistant via MQTT (Fork by B0st0wn)
 
-This container listens to Unraid’s WebSocket(s), parses events/metrics, and publishes them to MQTT so Home Assistant can discover and display your server.
+This container monitors your Unraid server and publishes metrics to MQTT so Home Assistant can discover and display your server status, Docker containers, VMs, and more.
 
-> **This repo is a fork of `IDmedia/hass-unraid`.** It keeps the same goal but restructures and tweaks the code to better fit my setup.
+> **This repo is a fork of `IDmedia/hass-unraid`.** It keeps the same goal but adds comprehensive GraphQL support and enhanced monitoring capabilities.
 
 ---
 
-## What’s different in this fork
+## What's different in this fork
 
+* **GraphQL Support (NEW!)**: Native Unraid 7.2+ GraphQL API integration for more comprehensive and structured data
+* **Docker Container Monitoring**: Binary sensors for each container showing running/stopped state with detailed attributes
+* **Enhanced VM Monitoring**: Improved state detection, vCPU, memory, and architecture information
 * **Modular parsers**: the original single parser file is split for readability and maintenance (e.g., `systems.py`, `disks.py`, `shares.py`, `vms.py`).
 * **Bug fixes & robustness** for my environment (Unraid and network idiosyncrasies), especially around inconsistent WebSocket payloads and reconnect behavior.
-* **Broader WebSocket coverage** (e.g., Docker/vars/update streams) and **more MQTT fields** where they were missing or unstable.
-* **VM telemetry** published to MQTT (power state, vCPU count, memory usage, IP addresses), enabling HA dashboards/automations.
-* **Optional NIC speed sensors** published to MQTT for monitoring link rates.
+* **Broader data coverage** including array status, parity checks, UPS monitoring, and share usage
+* **Dual mode operation**: Choose between GraphQL (recommended) or legacy WebSocket mode
 
 > **Privacy note:** All examples below use placeholders like `<UNRAID_HOST>`, `<MQTT_HOST>`, and `<SERVER_NAME>` — replace with your values.
 
@@ -20,9 +22,10 @@ This container listens to Unraid’s WebSocket(s), parses events/metrics, and pu
 
 ## Requirements
 
-* Unraid **7.x+** with WebSocket endpoints enabled (default).
-* An MQTT broker reachable from the container.
-* Home Assistant with the MQTT integration (auto discovery recommended).
+* Unraid **7.2+** with GraphQL API (recommended) or **7.x+** with WebSocket endpoints
+* An MQTT broker reachable from the container
+* Home Assistant with the MQTT integration (auto discovery recommended)
+* Unraid API key (for GraphQL mode - highly recommended)
 
 ---
 
@@ -36,11 +39,14 @@ Create `./data/config.yaml` next to your compose file:
 unraid:
   - name: <SERVER_NAME>
     host: <UNRAID_HOST>
-    port: 80
-    ssl: false
+    port: 443
+    ssl: true
     username: <UNRAID_USER>
     password: <UNRAID_PASSWORD>
+    api_key: <UNRAID_API_KEY>  # Required for GraphQL mode
     scan_interval: 30
+    ups_scan_interval: 15      # Optional: UPS refresh interval (default: 30)
+    system_scan_interval: 15   # Optional: System metrics refresh interval (default: 30)
 
 mqtt:
   host: <MQTT_HOST>
@@ -49,6 +55,8 @@ mqtt:
   password: <MQTT_PASSWORD>
 ```
 
+> **New in this fork**: Add `api_key` for GraphQL mode (Unraid 7.2+). Generate it at Settings → Management Access → API Keys.
+>
 > You can define multiple Unraid servers by adding more entries under `unraid:`.
 
 ### 2) Docker Compose
@@ -62,10 +70,19 @@ services:
     network_mode: bridge
     environment:
       - TZ=<YOUR_TZ>
+      - USE_GRAPHQL=true           # Set to false for legacy WebSocket mode
+      - UPS_SCAN_INTERVAL=15       # Optional: UPS refresh rate in seconds (overrides config)
+      - SYSTEM_SCAN_INTERVAL=15    # Optional: System metrics refresh rate in seconds (overrides config)
     volumes:
       - ./data:/data
 ```
 
+> **GraphQL mode** (default, recommended): Set `USE_GRAPHQL=true` and provide an API key
+>
+> **WebSocket mode** (legacy): Set `USE_GRAPHQL=false` for older Unraid versions
+>
+> **Real-time updates**: Set `UPS_SCAN_INTERVAL` and `SYSTEM_SCAN_INTERVAL` to 10-15 seconds for near real-time monitoring of critical metrics (UPS battery, CPU, RAM, temperatures). Environment variables override config.yaml values.
+>
 > If you prefer `docker run`, mirror the same bind mount (`-v $(pwd)/data:/data`) and env.
 
 ### 3) Verify in Home Assistant
@@ -82,16 +99,43 @@ The container publishes under a server-specific prefix, commonly:
 unraid/<SERVER_NAME>/...
 ```
 
-Examples (entity support depends on Unraid state and enabled streams):
+### GraphQL Mode Sensors (Unraid 7.2+)
 
-* `.../system/*` – CPU, RAM, uptime, array state
-* `.../disks/<disk_id>/*` – temps, SMART flags, spin state, utilization
-* `.../shares/<share_name>/*` – size, usage
-* `.../docker/<container>/*` – status, CPU/RAM
-* `.../vms/<vm_name>/*` – power state, vCPU, mem use, IPs
-* `.../network/*` – link speed, carrier (optional)
+* **Docker Containers** (NEW!):
+  * `binary_sensor.docker_<container>_state` – Running/stopped state
+  * Attributes: container ID, image, status, auto-start, port mappings
 
-> Topic naming may differ slightly from upstream where fixes/features were added; use MQTT Explorer to browse live topics.
+* **Virtual Machines**:
+  * `binary_sensor.vm_<name>_state` – Running/stopped/paused state
+  * `sensor.vm_<name>_vcpus` – Virtual CPU count
+  * `sensor.vm_<name>_memory` – Memory allocation (MB)
+  * Attributes: UUID, architecture, emulator
+
+* **Array & Parity**:
+  * `sensor.array_state` – Array state (STARTED, STOPPED, etc.)
+  * `sensor.array_usage` – Array usage percentage
+  * `sensor.parity_<name>_status` – Parity disk status
+  * `sensor.last_parity_check` – Last parity check results
+
+* **Disks & Shares**:
+  * `sensor.disk_<name>_*` – Temperature, usage, status
+  * `sensor.share_<name>_usage` – Share usage percentage
+
+* **UPS** (if available):
+  * `sensor.ups_<name>_battery` – Battery level (%)
+  * `sensor.ups_<name>_load` – Load percentage
+  * `sensor.ups_<name>_runtime` – Estimated runtime (minutes)
+
+* **System**:
+  * `sensor.cpu_temperature` – CPU temperature
+  * `sensor.cpu_utilization` – CPU usage %
+  * `sensor.system_uptime` – Server uptime
+
+### WebSocket Mode Sensors (Legacy)
+
+Similar sensors without Docker/VM running state detection. See [GRAPHQL_MIGRATION.md](GRAPHQL_MIGRATION.md) for details.
+
+> Use MQTT Explorer to browse live topics and see all available sensors.
 
 ---
 
